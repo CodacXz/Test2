@@ -281,76 +281,114 @@ def analyze_article_sentiment(article):
     
     return sentiment, combined_confidence, combined_details
 
-def get_technical_analysis(symbol):
-    """Get technical analysis indicators for Saudi stocks"""
+def get_tradingview_data(symbol):
+    """Get stock data from TradingView"""
+    
+    # Format symbol for TradingView (add leading zeros if needed)
+    symbol = str(symbol).zfill(4)  # Ensure 4 digits
+    
+    # TradingView API endpoint
+    url = "https://scanner.tradingview.com/saudi/scan"
+    
+    # Request payload for Saudi market
+    payload = {
+        "filter": [{"left": "market_cap_basic", "operation": "nempty"}],
+        "symbols": {"tickers": [f"TADAWUL:{symbol}.SR"]},  # Added .SR suffix
+        "columns": [
+            "close",
+            "change",
+            "volume", 
+            "market_cap_basic",
+            "price_earnings_ttm",
+            "high",
+            "low",
+            "open",
+            "Recommend.All",  # Technical analysis recommendation
+            "RSI",
+            "SMA20",
+            "SMA50",
+            "MACD.macd",
+            "sector"
+        ]
+    }
+
     try:
-        # Ensure proper Saudi stock symbol format
-        if not symbol.endswith('.SR'):
-            symbol = f"{symbol}.SR"
-            
-        # Convert symbol to Tadawul format if needed (e.g., 8160.SR for Arabia Insurance)
-        symbol = symbol.zfill(8) if symbol[0].isdigit() else symbol
-            
-        # Fetch stock data with longer period for better analysis
-        stock = yf.Ticker(symbol)
-        hist = stock.history(period="1y")  # Get 1 year of data for better trend analysis
-        
-        if hist.empty:
-            st.warning(f"No data found for {symbol} on Tadawul")
-            return None
-            
-        # Calculate technical indicators adjusted for Saudi market
-        # Moving Averages (using shorter periods due to Tadawul volatility)
-        hist['SMA10'] = ta.trend.sma_indicator(hist['Close'], window=10)
-        hist['SMA20'] = ta.trend.sma_indicator(hist['Close'], window=20)
-        hist['EMA9'] = ta.trend.ema_indicator(hist['Close'], window=9)
-        
-        # RSI (14-day standard, widely used in Tadawul)
-        hist['RSI'] = ta.momentum.rsi(hist['Close'], window=14)
-        
-        # MACD (12,26,9 standard parameters)
-        hist['MACD'] = ta.trend.macd(hist['Close'], window_slow=26, window_fast=12)
-        hist['MACD_Signal'] = ta.trend.macd_signal(hist['Close'])
-        
-        # Bollinger Bands (20,2 standard for Tadawul)
-        hist['BB_upper'] = ta.volatility.bollinger_hband(hist['Close'], window=20, window_dev=2)
-        hist['BB_lower'] = ta.volatility.bollinger_lband(hist['Close'], window=20, window_dev=2)
-        hist['BB_middle'] = ta.volatility.bollinger_mavg(hist['Close'], window=20)
-        
-        # Volume indicators
-        hist['OBV'] = ta.volume.on_balance_volume(hist['Close'], hist['Volume'])
-        
-        # Money Flow Index (specific for Saudi market volatility)
-        hist['MFI'] = ta.volume.money_flow_index(hist['High'], hist['Low'], hist['Close'], hist['Volume'])
-        
-        # Get latest values
-        latest = hist.iloc[-1]
-        prev = hist.iloc[-2]
-        
-        # Technical Analysis Summary
-        analysis = {
-            'price': latest['Close'],
-            'change_percent': ((latest['Close'] - prev['Close']) / prev['Close']) * 100,
-            'sma10': latest['SMA10'],
-            'sma20': latest['SMA20'],
-            'ema9': latest['EMA9'],
-            'rsi': latest['RSI'],
-            'macd': latest['MACD'],
-            'macd_signal': latest['MACD_Signal'],
-            'bb_upper': latest['BB_upper'],
-            'bb_lower': latest['BB_lower'],
-            'mfi': latest['MFI'],  # Money Flow Index
-            'volume': latest['Volume'],
-            'avg_volume_10d': hist['Volume'][-10:].mean(),  # 10-day average volume
-            'obv': latest['OBV'],
-            'historical_data': hist
+        headers = {
+            'User-Agent': 'Mozilla/5.0',
+            'Content-Type': 'application/json'
         }
         
-        return analysis
+        response = requests.post(url, json=payload, headers=headers)
+        data = response.json()
         
+        if 'data' in data and len(data['data']) > 0:
+            stock_data = data['data'][0]['d']
+            
+            return pd.DataFrame({
+                'Symbol': [f"{symbol}.SR"],
+                'Close': [stock_data[0]],
+                'Change %': [stock_data[1]],
+                'Volume': [stock_data[2]],
+                'Market Cap': [stock_data[3]],
+                'P/E Ratio': [stock_data[4]],
+                'High': [stock_data[5]],
+                'Low': [stock_data[6]],
+                'Open': [stock_data[7]],
+                'Technical Rating': [stock_data[8]],
+                'RSI': [stock_data[9]],
+                'SMA20': [stock_data[10]],
+                'SMA50': [stock_data[11]],
+                'MACD': [stock_data[12]],
+                'Sector': [stock_data[13]]
+            })
+        else:
+            st.error(f"No data found for symbol {symbol}.SR")
+            return None
+            
     except Exception as e:
-        st.error(f"Error fetching Tadawul data: {str(e)}")
+        st.error(f"Error fetching data: {str(e)}")
         return None
+
+def get_technical_analysis(symbol):
+    """Get technical analysis for Saudi stocks"""
+    df = get_tradingview_data(symbol)
+    
+    if df is not None:
+        analysis = {
+            'close': df['Close'].iloc[0],
+            'rsi': df['RSI'].iloc[0],
+            'sma20': df['SMA20'].iloc[0],
+            'sma50': df['SMA50'].iloc[0],
+            'macd': df['MACD'].iloc[0],
+            'technical_rating': df['Technical Rating'].iloc[0]
+        }
+        
+        signals = []
+        
+        # RSI Analysis
+        if analysis['rsi'] > 70:
+            signals.append(("RSI", "Overbought", "SELL"))
+        elif analysis['rsi'] < 30:
+            signals.append(("RSI", "Oversold", "BUY"))
+            
+        # Moving Average Analysis
+        if analysis['close'] > analysis['sma20'] > analysis['sma50']:
+            signals.append(("Moving Averages", "Uptrend", "BUY"))
+        elif analysis['close'] < analysis['sma20'] < analysis['sma50']:
+            signals.append(("Moving Averages", "Downtrend", "SELL"))
+            
+        # MACD Analysis
+        if analysis['macd'] > 0:
+            signals.append(("MACD", "Bullish", "BUY"))
+        elif analysis['macd'] < 0:
+            signals.append(("MACD", "Bearish", "SELL"))
+            
+        # Overall Technical Rating
+        signals.append(("Overall", f"Rating: {analysis['technical_rating']}", 
+                      "BUY" if analysis['technical_rating'] > 0 else "SELL"))
+        
+        return signals
+    return None
 
 def plot_technical_chart(hist_data):
     """Create technical analysis chart using plotly"""
@@ -515,50 +553,6 @@ def display_article(article):
         
         st.markdown(f"[Read full article]({url})")
         st.markdown("---")
-
-def get_tradingview_data(symbol):
-    """Get stock data from TradingView"""
-    
-    # TradingView API endpoint
-    url = "https://scanner.tradingview.com/saudi/scan"
-    
-    # Request payload for Saudi market
-    payload = {
-        "filter": [{"left": "market_cap_basic", "operation": "nempty"}],
-        "symbols": {"tickers": [f"TADAWUL:{symbol}"]},
-        "columns": [
-            "close",
-            "change",
-            "volume",
-            "market_cap_basic",
-            "price_earnings_ttm",
-            "sector"
-        ]
-    }
-
-    try:
-        response = requests.post(url, json=payload)
-        data = response.json()
-        
-        if 'data' in data and len(data['data']) > 0:
-            stock_data = data['data'][0]
-            
-            return pd.DataFrame({
-                'Symbol': [symbol],
-                'Close': [stock_data['d'][0]],
-                'Change %': [stock_data['d'][1]],
-                'Volume': [stock_data['d'][2]],
-                'Market Cap': [stock_data['d'][3]],
-                'P/E Ratio': [stock_data['d'][4]],
-                'Sector': [stock_data['d'][5]]
-            })
-        else:
-            st.error(f"No data found for symbol {symbol}")
-            return None
-            
-    except Exception as e:
-        st.error(f"Error fetching data: {str(e)}")
-        return None
 
 def main():
     st.title("Saudi Stock Market News")
