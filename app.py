@@ -4,6 +4,10 @@ from datetime import datetime, timedelta
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 from transformers import pipeline, AutoModelForSequenceClassification, AutoTokenizer
 import torch
+import yfinance as yf
+import pandas as pd
+import ta  # Technical Analysis library
+import plotly.graph_objects as go
 
 # API Configuration
 NEWS_API_URL = "https://api.marketaux.com/v1/news/all"
@@ -276,8 +280,149 @@ def analyze_article_sentiment(article):
     
     return sentiment, combined_confidence, combined_details
 
+def get_technical_analysis(symbol):
+    """Get technical analysis indicators for Saudi stocks"""
+    try:
+        # Ensure proper Saudi stock symbol format
+        if not symbol.endswith('.SR'):
+            symbol = f"{symbol}.SR"
+            
+        # Convert symbol to Tadawul format if needed (e.g., 8160.SR for Arabia Insurance)
+        symbol = symbol.zfill(8) if symbol[0].isdigit() else symbol
+            
+        # Fetch stock data with longer period for better analysis
+        stock = yf.Ticker(symbol)
+        hist = stock.history(period="1y")  # Get 1 year of data for better trend analysis
+        
+        if hist.empty:
+            st.warning(f"No data found for {symbol} on Tadawul")
+            return None
+            
+        # Calculate technical indicators adjusted for Saudi market
+        # Moving Averages (using shorter periods due to Tadawul volatility)
+        hist['SMA10'] = ta.trend.sma_indicator(hist['Close'], window=10)
+        hist['SMA20'] = ta.trend.sma_indicator(hist['Close'], window=20)
+        hist['EMA9'] = ta.trend.ema_indicator(hist['Close'], window=9)
+        
+        # RSI (14-day standard, widely used in Tadawul)
+        hist['RSI'] = ta.momentum.rsi(hist['Close'], window=14)
+        
+        # MACD (12,26,9 standard parameters)
+        hist['MACD'] = ta.trend.macd(hist['Close'], window_slow=26, window_fast=12)
+        hist['MACD_Signal'] = ta.trend.macd_signal(hist['Close'])
+        
+        # Bollinger Bands (20,2 standard for Tadawul)
+        hist['BB_upper'] = ta.volatility.bollinger_hband(hist['Close'], window=20, window_dev=2)
+        hist['BB_lower'] = ta.volatility.bollinger_lband(hist['Close'], window=20, window_dev=2)
+        hist['BB_middle'] = ta.volatility.bollinger_mavg(hist['Close'], window=20)
+        
+        # Volume indicators
+        hist['OBV'] = ta.volume.on_balance_volume(hist['Close'], hist['Volume'])
+        
+        # Money Flow Index (specific for Saudi market volatility)
+        hist['MFI'] = ta.volume.money_flow_index(hist['High'], hist['Low'], hist['Close'], hist['Volume'])
+        
+        # Get latest values
+        latest = hist.iloc[-1]
+        prev = hist.iloc[-2]
+        
+        # Technical Analysis Summary
+        analysis = {
+            'price': latest['Close'],
+            'change_percent': ((latest['Close'] - prev['Close']) / prev['Close']) * 100,
+            'sma10': latest['SMA10'],
+            'sma20': latest['SMA20'],
+            'ema9': latest['EMA9'],
+            'rsi': latest['RSI'],
+            'macd': latest['MACD'],
+            'macd_signal': latest['MACD_Signal'],
+            'bb_upper': latest['BB_upper'],
+            'bb_lower': latest['BB_lower'],
+            'mfi': latest['MFI'],  # Money Flow Index
+            'volume': latest['Volume'],
+            'avg_volume_10d': hist['Volume'][-10:].mean(),  # 10-day average volume
+            'obv': latest['OBV'],
+            'historical_data': hist
+        }
+        
+        return analysis
+        
+    except Exception as e:
+        st.error(f"Error fetching Tadawul data: {str(e)}")
+        return None
+
+def plot_technical_chart(hist_data):
+    """Create technical analysis chart using plotly"""
+    fig = go.Figure()
+    
+    # Candlestick chart
+    fig.add_trace(go.Candlestick(
+        x=hist_data.index,
+        open=hist_data['Open'],
+        high=hist_data['High'],
+        low=hist_data['Low'],
+        close=hist_data['Close'],
+        name='OHLC'
+    ))
+    
+    # Add Moving Averages
+    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA20'], name='SMA20'))
+    
+    # Add Bollinger Bands
+    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['BB_upper'], name='BB Upper',
+                            line=dict(dash='dash')))
+    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['BB_lower'], name='BB Lower',
+                            line=dict(dash='dash')))
+    
+    fig.update_layout(
+        title='Price and Technical Indicators',
+        yaxis_title='Price',
+        xaxis_title='Date',
+        template='plotly_dark'
+    )
+    
+    return fig
+
+def get_technical_signals(analysis):
+    """Generate trading signals based on technical indicators for Saudi stocks"""
+    signals = []
+    
+    # RSI Signals (adjusted for Tadawul volatility)
+    if analysis['rsi'] > 75:  # More conservative overbought level
+        signals.append(("RSI", "Strongly Overbought", "SELL"))
+    elif analysis['rsi'] > 70:
+        signals.append(("RSI", "Overbought", "SELL"))
+    elif analysis['rsi'] < 25:  # More conservative oversold level
+        signals.append(("RSI", "Strongly Oversold", "BUY"))
+    elif analysis['rsi'] < 30:
+        signals.append(("RSI", "Oversold", "BUY"))
+        
+    # MACD Signals
+    if analysis['macd'] > analysis['macd_signal']:
+        signals.append(("MACD", "Bullish Crossover", "BUY"))
+    elif analysis['macd'] < analysis['macd_signal']:
+        signals.append(("MACD", "Bearish Crossover", "SELL"))
+        
+    # Moving Average Signals
+    if analysis['price'] > analysis['sma10'] > analysis['sma20']:
+        signals.append(("MA", "Strong Bullish Trend", "BUY"))
+    elif analysis['price'] < analysis['sma10'] < analysis['sma20']:
+        signals.append(("MA", "Strong Bearish Trend", "SELL"))
+        
+    # Money Flow Index Signals
+    if analysis['mfi'] > 80:
+        signals.append(("MFI", "Overbought", "SELL"))
+    elif analysis['mfi'] < 20:
+        signals.append(("MFI", "Oversold", "BUY"))
+        
+    # Volume Analysis
+    if analysis['volume'] > analysis['avg_volume_10d'] * 1.5:
+        signals.append(("Volume", "Unusual High Volume", "WATCH"))
+        
+    return signals
+
 def display_article(article):
-    """Display a single news article with enhanced sentiment analysis"""
+    """Display a single news article with enhanced sentiment and technical analysis"""
     title = article.get("title", "No title available")
     description = article.get("description", "No description available")
     url = article.get("url", "#")
@@ -333,6 +478,39 @@ def display_article(article):
                     st.write("#### RoBERTa Analysis")
                     st.write(f"Label: {roberta['label']}")
                     st.write(f"Score: {roberta['score']:.2%}")
+        
+        # Add Technical Analysis section
+        if 'entities' in article and article['entities']:
+            for entity in article['entities']:
+                if entity.get('type') == 'equity' and entity.get('symbol'):
+                    st.write("### Technical Analysis")
+                    with st.expander(f"Technical Analysis for {entity['name']} ({entity['symbol']})"):
+                        analysis = get_technical_analysis(entity['symbol'])
+                        
+                        if analysis:
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                st.metric("Current Price", f"SAR {analysis['price']:.2f}", 
+                                        f"{analysis['change_percent']:.2f}%")
+                                st.metric("RSI", f"{analysis['rsi']:.2f}")
+                                st.metric("MACD", f"{analysis['macd']:.2f}")
+                            
+                            with col2:
+                                st.metric("SMA20", f"SAR {analysis['sma20']:.2f}")
+                                st.metric("Volume", f"{analysis['volume']:,.0f}")
+                            
+                            # Plot technical chart
+                            st.plotly_chart(plot_technical_chart(analysis['historical_data']))
+                            
+                            # Display trading signals
+                            signals = get_technical_signals(analysis)
+                            if signals:
+                                st.write("### Trading Signals")
+                                for indicator, condition, signal in signals:
+                                    st.write(f"- {indicator}: {condition} ({signal})")
+                        else:
+                            st.warning("Unable to fetch technical analysis data")
         
         st.markdown(f"[Read full article]({url})")
         st.markdown("---")
