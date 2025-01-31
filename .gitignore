@@ -14,4 +14,8 @@ ENV/
 
 # IDE
 .vscode/
-.idea/ 
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db 
