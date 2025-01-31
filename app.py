@@ -9,6 +9,8 @@ import pandas as pd
 import ta  # Technical Analysis library
 import plotly.graph_objects as go
 import json
+from dotenv import load_dotenv
+import os
 
 # API Configuration
 NEWS_API_URL = "https://api.marketaux.com/v1/news/all"
@@ -31,6 +33,12 @@ MOCK_NEWS_DATA = [
         "published_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     }
 ]
+
+load_dotenv()
+
+ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+FMP_API_KEY = os.getenv("FMP_API_KEY")
+MARKETSTACK_API_KEY = os.getenv("MARKETSTACK_API_KEY")
 
 @st.cache_resource
 def load_finbert():
@@ -281,158 +289,207 @@ def analyze_article_sentiment(article):
     
     return sentiment, combined_confidence, combined_details
 
-def get_yahoo_finance_data(symbol):
-    """Get stock data from Yahoo Finance via our Node.js backend"""
+def get_fmp_data(symbol):
+    """Get stock data from Financial Modeling Prep for Saudi stocks"""
+    API_KEY = FMP_API_KEY
+    BASE_URL = "https://financialmodelingprep.com/api/v3"
+    
+    # Format symbol for Saudi stocks
+    formatted_symbol = f"{symbol}.SAU"
+    
     try:
-        # Remove any .SR suffix if present
-        symbol = symbol.replace('.SR', '')
-        
-        # Call our Node.js backend
-        response = requests.get(f"http://localhost:3000/stock/{symbol}")
-        response.raise_for_status()  # Raise exception for bad status codes
-        
+        # Get real-time quote
+        quote_url = f"{BASE_URL}/quote/{formatted_symbol}?apikey={API_KEY}"
+        response = requests.get(quote_url)
         data = response.json()
-        quote = data['quote']
-        historical = data['historical']
         
-        # Create DataFrame with the data
-        df = pd.DataFrame({
-            'Symbol': [symbol],
-            'Close': [quote['regularMarketPrice']],
-            'Change %': [quote['regularMarketChangePercent']],
-            'Volume': [quote['regularMarketVolume']],
-            'Market Cap': [quote['marketCap']],
-            'P/E Ratio': [quote['trailingPE']],
-            'High': [quote['regularMarketDayHigh']],
-            'Low': [quote['regularMarketDayLow']],
-            'Open': [quote['regularMarketOpen']],
-            '52 Week High': [quote['fiftyTwoWeekHigh']],
-            '52 Week Low': [quote['fiftyTwoWeekLow']]
-        })
+        if data and len(data) > 0:
+            quote = data[0]
+            
+            # Get company profile for additional info
+            profile_url = f"{BASE_URL}/profile/{formatted_symbol}?apikey={API_KEY}"
+            profile_response = requests.get(profile_url)
+            profile_data = profile_response.json()
+            company_profile = profile_data[0] if profile_data else {}
+            
+            # Get technical indicators
+            tech_url = f"{BASE_URL}/technical_indicator/daily/{formatted_symbol}?period=14&type=rsi,sma&apikey={API_KEY}"
+            tech_response = requests.get(tech_url)
+            tech_data = tech_response.json()
+            
+            return {
+                'symbol': symbol,
+                'name': company_profile.get('companyName', 'N/A'),
+                'sector': company_profile.get('sector', 'N/A'),
+                'price': quote.get('price', 0),
+                'change_percent': quote.get('changesPercentage', 0),
+                'volume': quote.get('volume', 0),
+                'market_cap': quote.get('marketCap', 0),
+                'pe_ratio': quote.get('pe', 0),
+                'eps': quote.get('eps', 0),
+                'high': quote.get('dayHigh', 0),
+                'low': quote.get('dayLow', 0),
+                'open': quote.get('open', 0),
+                'previous_close': quote.get('previousClose', 0),
+                'year_high': quote.get('yearHigh', 0),
+                'year_low': quote.get('yearLow', 0),
+                'rsi': tech_data[0].get('rsi', 0) if tech_data else 0,
+                'sma20': tech_data[0].get('sma', 0) if tech_data else 0
+            }
+            
+        elif "Error Message" in data:
+            st.error(f"API Error: {data['Error Message']}")
+        return None
+            
+        return None
         
-        # Calculate technical indicators using historical data
-        hist_df = pd.DataFrame(historical)
-        if not hist_df.empty:
-            df['RSI'] = ta.momentum.RSIIndicator(hist_df['close']).rsi().iloc[-1]
-            df['SMA20'] = ta.trend.SMAIndicator(hist_df['close'], window=20).sma_indicator().iloc[-1]
-            df['SMA50'] = ta.trend.SMAIndicator(hist_df['close'], window=50).sma_indicator().iloc[-1]
-            macd = ta.trend.MACD(hist_df['close'])
-            df['MACD'] = macd.macd().iloc[-1]
+    except Exception as e:
+        st.error(f"Error fetching data: {str(e)}")
+        return None
+
+def get_marketstack_data(symbol):
+    """Get stock data from Marketstack for Saudi stocks"""
+    API_KEY = "e537111ec25329587f27f61bb59938bc"
+    BASE_URL = "http://api.marketstack.com/v1"
+    
+    # Format symbol for Saudi stocks
+    formatted_symbol = f"{symbol}.SAU"
+    
+    try:
+        # Get real-time data
+        params = {
+            "access_key": API_KEY,
+            "symbols": formatted_symbol,
+            "limit": 1
+        }
+        
+        # Get latest quote
+        response = requests.get(f"{BASE_URL}/intraday/latest", params=params)
+        data = response.json()
+        
+        if "data" in data and len(data["data"]) > 0:
+            quote = data["data"][0]
             
-        return df
+            # Get EOD data for technical analysis
+            eod_params = {
+                "access_key": API_KEY,
+                "symbols": formatted_symbol,
+                "limit": 30  # Get last 30 days for technical analysis
+            }
             
+            eod_response = requests.get(f"{BASE_URL}/eod", params=eod_params)
+            eod_data = eod_response.json()
+            
+            # Calculate technical indicators
+            if "data" in eod_data and len(eod_data["data"]) > 0:
+                df = pd.DataFrame(eod_data["data"])
+                df['close'] = pd.to_numeric(df['close'])
+                
+                rsi = ta.momentum.RSIIndicator(df['close']).rsi().iloc[-1]
+                sma20 = ta.trend.SMAIndicator(df['close'], window=20).sma_indicator().iloc[-1]
+                
+                return {
+                    'symbol': symbol,
+                    'price': quote.get('last', 0),
+                    'open': quote.get('open', 0),
+                    'high': quote.get('high', 0),
+                    'low': quote.get('low', 0),
+                    'volume': quote.get('volume', 0),
+                    'change': quote.get('change', 0),
+                    'change_percent': quote.get('change_percent', 0),
+                    'last_updated': quote.get('date', ''),
+                    'rsi': rsi,
+                    'sma20': sma20
+                }
+            
+        if "error" in data:
+            st.error(f"API Error: {data['error']['message']}")
+            return None
+            
+        return None
+        
     except requests.exceptions.RequestException as e:
-        st.error(f"Network error when fetching data: {str(e)}")
+        st.error(f"Network error: {str(e)}")
         return None
     except Exception as e:
         st.error(f"Error processing data: {str(e)}")
         return None
 
 def get_technical_analysis(symbol):
-    """Get technical analysis for Saudi stocks"""
-    df = get_yahoo_finance_data(symbol)
+    """Get technical analysis using Marketstack data"""
+    data = get_marketstack_data(symbol)
     
-    if df is not None:
-        analysis = {
-            'price': df['Close'].iloc[0],
-            'change_percent': df['Change %'].iloc[0],
-            'volume': df['Volume'].iloc[0],
-            'rsi': df['RSI'].iloc[0],
-            'sma20': df['SMA20'].iloc[0],
-            'sma50': df['SMA50'].iloc[0],
-            'macd': df['MACD'].iloc[0]
-        }
-        
+    if data:
         signals = []
         
         # RSI Analysis
-        if analysis['rsi'] > 70:
+        rsi = data.get('rsi')
+        if rsi:
+            if rsi > 70:
+                signals.append(("RSI", "Overbought", "SELL"))
+            elif rsi < 30:
+                signals.append(("RSI", "Oversold", "BUY"))
+        
+        # Moving Average Analysis
+        price = data.get('price')
+        sma20 = data.get('sma20')
+        if price and sma20:
+            if price > sma20:
+                signals.append(("SMA20", "Above Average", "BUY"))
+            else:
+                signals.append(("SMA20", "Below Average", "SELL"))
+        
+        # Price Change Analysis
+        change = data.get('change_percent')
+        if change:
+            if change > 5:
+                signals.append(("Price Change", "Strong Momentum", "BUY"))
+            elif change < -5:
+                signals.append(("Price Change", "Weak Momentum", "SELL"))
+        
+        return {
+            'price': data['price'],
+            'change_percent': data['change_percent'],
+            'volume': data['volume'],
+            'signals': signals,
+            'rsi': data['rsi'],
+            'sma20': data['sma20'],
+            'last_updated': data['last_updated']
+        }
+    
+    return None
+
+def get_technical_signals(analysis):
+    """Generate trading signals based on technical indicators"""
+        signals = []
+    
+    if not analysis:
+        return signals
+        
+        # RSI Analysis
+    rsi = analysis.get('rsi')
+    if rsi:
+        if rsi > 70:
             signals.append(("RSI", "Overbought", "SELL"))
-        elif analysis['rsi'] < 30:
+        elif rsi < 30:
             signals.append(("RSI", "Oversold", "BUY"))
             
         # Moving Average Analysis
-        if analysis['price'] > analysis['sma20'] > analysis['sma50']:
-            signals.append(("Moving Averages", "Uptrend", "BUY"))
-        elif analysis['price'] < analysis['sma20'] < analysis['sma50']:
-            signals.append(("Moving Averages", "Downtrend", "SELL"))
+    price = analysis.get('price')
+    sma20 = analysis.get('sma20')
+    if all(v is not None for v in [price, sma20]):
+        if price > sma20:
+            signals.append(("SMA20", "Above Average", "BUY"))
+        else:
+            signals.append(("SMA20", "Below Average", "SELL"))
             
-        # MACD Analysis
-        if analysis['macd'] > 0:
-            signals.append(("MACD", "Bullish", "BUY"))
-        elif analysis['macd'] < 0:
-            signals.append(("MACD", "Bearish", "SELL"))
-            
-        return analysis
-    return None
-
-def plot_technical_chart(hist_data):
-    """Create technical analysis chart using plotly"""
-    fig = go.Figure()
-    
-    # Candlestick chart
-    fig.add_trace(go.Candlestick(
-        x=hist_data.index,
-        open=hist_data['Open'],
-        high=hist_data['High'],
-        low=hist_data['Low'],
-        close=hist_data['Close'],
-        name='OHLC'
-    ))
-    
-    # Add Moving Averages
-    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['SMA20'], name='SMA20'))
-    
-    # Add Bollinger Bands
-    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['BB_upper'], name='BB Upper',
-                            line=dict(dash='dash')))
-    fig.add_trace(go.Scatter(x=hist_data.index, y=hist_data['BB_lower'], name='BB Lower',
-                            line=dict(dash='dash')))
-    
-    fig.update_layout(
-        title='Price and Technical Indicators',
-        yaxis_title='Price',
-        xaxis_title='Date',
-        template='plotly_dark'
-    )
-    
-    return fig
-
-def get_technical_signals(analysis):
-    """Generate trading signals based on technical indicators for Saudi stocks"""
-    signals = []
-    
-    # RSI Signals (adjusted for Tadawul volatility)
-    if analysis['rsi'] > 75:  # More conservative overbought level
-        signals.append(("RSI", "Strongly Overbought", "SELL"))
-    elif analysis['rsi'] > 70:
-        signals.append(("RSI", "Overbought", "SELL"))
-    elif analysis['rsi'] < 25:  # More conservative oversold level
-        signals.append(("RSI", "Strongly Oversold", "BUY"))
-    elif analysis['rsi'] < 30:
-        signals.append(("RSI", "Oversold", "BUY"))
-        
-    # MACD Signals
-    if analysis['macd'] > analysis['macd_signal']:
-        signals.append(("MACD", "Bullish Crossover", "BUY"))
-    elif analysis['macd'] < analysis['macd_signal']:
-        signals.append(("MACD", "Bearish Crossover", "SELL"))
-        
-    # Moving Average Signals
-    if analysis['price'] > analysis['sma10'] > analysis['sma20']:
-        signals.append(("MA", "Strong Bullish Trend", "BUY"))
-    elif analysis['price'] < analysis['sma10'] < analysis['sma20']:
-        signals.append(("MA", "Strong Bearish Trend", "SELL"))
-        
-    # Money Flow Index Signals
-    if analysis['mfi'] > 80:
-        signals.append(("MFI", "Overbought", "SELL"))
-    elif analysis['mfi'] < 20:
-        signals.append(("MFI", "Oversold", "BUY"))
-        
-    # Volume Analysis
-    if analysis['volume'] > analysis['avg_volume_10d'] * 1.5:
-        signals.append(("Volume", "Unusual High Volume", "WATCH"))
+    # Price Change Analysis
+    change = analysis.get('change_percent')
+    if change:
+        if change > 5:
+            signals.append(("Price Change", "Strong Momentum", "BUY"))
+        elif change < -5:
+            signals.append(("Price Change", "Weak Momentum", "SELL"))
         
     return signals
 
@@ -509,7 +566,6 @@ def display_article(article):
                                 st.metric("Current Price", f"SAR {analysis['price']:.2f}", 
                                         f"{analysis['change_percent']:.2f}%")
                                 st.metric("RSI", f"{analysis['rsi']:.2f}")
-                                st.metric("MACD", f"{analysis['macd']:.2f}")
                             
                             with col2:
                                 st.metric("SMA20", f"SAR {analysis['sma20']:.2f}")
@@ -529,6 +585,179 @@ def display_article(article):
         
         st.markdown(f"[Read full article]({url})")
         st.markdown("---")
+
+def get_alpha_vantage_data(symbol):
+    """Get stock data from Alpha Vantage with enhanced Saudi market support"""
+    try:
+        # Get quote data
+        quote_data = get_alpha_vantage_quote(symbol)
+        if quote_data is None:
+            return None
+            
+        # Get technical indicators
+        tech_data = get_alpha_vantage_technical(symbol)
+        if tech_data:
+            quote_data.update(tech_data)
+            
+        return pd.DataFrame([quote_data])
+        
+    except Exception as e:
+        st.error(f"Error fetching data: {str(e)}")
+        return None
+
+def get_alpha_vantage_quote(symbol):
+    """Get real-time quote from Alpha Vantage"""
+    BASE_URL = "https://www.alphavantage.co/query"
+    
+    params = {
+        "function": "GLOBAL_QUOTE",
+        "symbol": f"{symbol}.SAU",  # Saudi stock format
+        "apikey": ALPHA_VANTAGE_API_KEY
+    }
+    
+    try:
+        response = requests.get(BASE_URL, params=params)
+        data = response.json()
+        
+        if "Global Quote" in data and data["Global Quote"]:
+            quote = data["Global Quote"]
+            return {
+                'Symbol': symbol,
+                'Close': float(quote.get('05. price', 0)),
+                'Change %': float(quote.get('10. change percent', '0').replace('%', '')),
+                'Volume': int(quote.get('06. volume', 0)),
+                'Open': float(quote.get('02. open', 0)),
+                'High': float(quote.get('03. high', 0)),
+                'Low': float(quote.get('04. low', 0))
+            }
+            
+        if "Note" in data:
+            st.warning("API rate limit reached. Please wait a minute before trying again.")
+            return None
+            
+        return None
+        
+    except Exception as e:
+        st.error(f"Error fetching quote: {str(e)}")
+        return None
+
+def get_alpha_vantage_technical(symbol):
+    """Get technical indicators from Alpha Vantage"""
+    BASE_URL = "https://www.alphavantage.co/query"
+    
+    # Get RSI
+    params = {
+        "function": "RSI",
+        "symbol": f"{symbol}.SAU",
+        "interval": "daily",
+        "time_period": 14,
+        "series_type": "close",
+        "apikey": ALPHA_VANTAGE_API_KEY
+    }
+    
+    try:
+        response = requests.get(BASE_URL, params=params)
+        data = response.json()
+        
+        if "Technical Analysis: RSI" in data:
+            latest_date = max(data["Technical Analysis: RSI"].keys())
+            rsi = float(data["Technical Analysis: RSI"][latest_date]["RSI"])
+            
+            # Get SMA
+            sma_params = {
+                "function": "SMA",
+                "symbol": f"{symbol}.SAU",
+                "interval": "daily",
+                "time_period": 20,
+                "series_type": "close",
+                "apikey": ALPHA_VANTAGE_API_KEY
+            }
+            
+            sma_response = requests.get(BASE_URL, params=sma_params)
+            sma_data = sma_response.json()
+            
+            if "Technical Analysis: SMA" in sma_data:
+                latest_sma_date = max(sma_data["Technical Analysis: SMA"].keys())
+                sma = float(sma_data["Technical Analysis: SMA"][latest_sma_date]["SMA"])
+                
+                return {
+                    'RSI': rsi,
+                    'SMA20': sma
+                }
+                
+        if "Note" in data:
+            st.warning("API rate limit reached. Please wait a minute before trying again.")
+            return None
+            
+        return None
+        
+    except Exception as e:
+        st.error(f"Error fetching technical indicators: {str(e)}")
+        return None
+
+@st.cache_data(ttl=300)  # Cache for 5 minutes
+def get_alpha_vantage_daily(symbol):
+    """Get daily historical data from Alpha Vantage"""
+    BASE_URL = "https://www.alphavantage.co/query"
+    
+    params = {
+        "function": "TIME_SERIES_DAILY",
+        "symbol": f"{symbol}.SAU",
+        "outputsize": "compact",
+        "apikey": ALPHA_VANTAGE_API_KEY
+    }
+    
+    try:
+        response = requests.get(BASE_URL, params=params)
+        data = response.json()
+        
+        if "Time Series (Daily)" in data:
+            # Convert to DataFrame
+            df = pd.DataFrame.from_dict(data["Time Series (Daily)"], orient='index')
+            df.index = pd.to_datetime(df.index)
+            df = df.astype(float)
+            
+            # Rename columns
+            df.columns = ['Open', 'High', 'Low', 'Close', 'Volume']
+            
+            return df
+            
+        if "Note" in data:
+            st.warning("API rate limit reached. Please wait a minute before trying again.")
+            return None
+            
+        return None
+        
+    except Exception as e:
+        st.error(f"Error fetching historical data: {str(e)}")
+        return None
+
+def get_fmp_technical_indicators(symbol):
+    """Get technical indicators from FMP"""
+    API_KEY = FMP_API_KEY
+    BASE_URL = "https://financialmodelingprep.com/api/v3"
+    
+    try:
+        # Get technical indicators
+        tech_url = f"{BASE_URL}/technical_indicator/daily/{symbol}.SAU?period=10&type=rsi,sma,ema,macd&apikey={API_KEY}"
+        response = requests.get(tech_url)
+        data = response.json()
+        
+        if data and len(data) > 0:
+            latest = data[0]
+            return {
+                'RSI': latest.get('rsi', 0),
+                'SMA20': latest.get('sma', 0),
+                'EMA': latest.get('ema', 0),
+                'MACD': latest.get('macd', 0),
+                'MACD_Signal': latest.get('signal', 0)
+            }
+            
+        return None
+        
+    except Exception as e:
+        st.error(f"Error fetching technical indicators: {str(e)}")
+        return None
 
 def main():
     st.title("Saudi Stock Market News")
