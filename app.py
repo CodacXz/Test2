@@ -281,81 +281,44 @@ def analyze_article_sentiment(article):
     
     return sentiment, combined_confidence, combined_details
 
-def get_tradingview_data(symbol):
-    """Get stock data from TradingView"""
-    
-    # Format symbol for TradingView (add leading zeros if needed)
-    symbol = str(symbol).zfill(4)  # Ensure 4 digits
-    
-    # TradingView API endpoint
-    url = "https://scanner.tradingview.com/saudi/scan"
-    
-    # Request payload for Saudi market
-    payload = {
-        "filter": [{"left": "market_cap_basic", "operation": "nempty"}],
-        "symbols": {"tickers": [f"TADAWUL:{symbol}"]},  # Removed .SR suffix
-        "columns": [
-            "close",
-            "change",
-            "volume", 
-            "market_cap_basic",
-            "price_earnings_ttm",
-            "high",
-            "low",
-            "open",
-            "Recommend.All",
-            "RSI",
-            "SMA20",
-            "SMA50",
-            "MACD.macd"
-        ]
-    }
-
+def get_yahoo_finance_data(symbol):
+    """Get stock data from Yahoo Finance via our Node.js backend"""
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-        }
+        # Remove any .SR suffix if present
+        symbol = symbol.replace('.SR', '')
         
-        response = requests.post(url, json=payload, headers=headers)
+        # Call our Node.js backend
+        response = requests.get(f"http://localhost:3000/stock/{symbol}")
+        response.raise_for_status()  # Raise exception for bad status codes
         
-        # Check if response is valid JSON
-        try:
-            data = response.json()
-        except json.JSONDecodeError as e:
-            st.error(f"Invalid JSON response from TradingView API")
-            return None
+        data = response.json()
+        quote = data['quote']
+        historical = data['historical']
         
-        # Debug logging
-        if 'data' not in data:
-            st.error(f"Unexpected API response structure: {data}")
-            return None
-            
-        if not data['data']:
-            st.warning(f"No data found for symbol TADAWUL:{symbol}")
-            return None
-            
-        stock_data = data['data'][0]['d']
-        
-        # Create DataFrame with safe value extraction
+        # Create DataFrame with the data
         df = pd.DataFrame({
             'Symbol': [symbol],
-            'Close': [safe_get(stock_data, 0)],
-            'Change %': [safe_get(stock_data, 1)],
-            'Volume': [safe_get(stock_data, 2)],
-            'Market Cap': [safe_get(stock_data, 3)],
-            'P/E Ratio': [safe_get(stock_data, 4)],
-            'High': [safe_get(stock_data, 5)],
-            'Low': [safe_get(stock_data, 6)],
-            'Open': [safe_get(stock_data, 7)],
-            'Technical Rating': [safe_get(stock_data, 8)],
-            'RSI': [safe_get(stock_data, 9)],
-            'SMA20': [safe_get(stock_data, 10)],
-            'SMA50': [safe_get(stock_data, 11)],
-            'MACD': [safe_get(stock_data, 12)]
+            'Close': [quote['regularMarketPrice']],
+            'Change %': [quote['regularMarketChangePercent']],
+            'Volume': [quote['regularMarketVolume']],
+            'Market Cap': [quote['marketCap']],
+            'P/E Ratio': [quote['trailingPE']],
+            'High': [quote['regularMarketDayHigh']],
+            'Low': [quote['regularMarketDayLow']],
+            'Open': [quote['regularMarketOpen']],
+            '52 Week High': [quote['fiftyTwoWeekHigh']],
+            '52 Week Low': [quote['fiftyTwoWeekLow']]
         })
         
+        # Calculate technical indicators using historical data
+        hist_df = pd.DataFrame(historical)
+        if not hist_df.empty:
+            df['RSI'] = ta.momentum.RSIIndicator(hist_df['close']).rsi().iloc[-1]
+            df['SMA20'] = ta.trend.SMAIndicator(hist_df['close'], window=20).sma_indicator().iloc[-1]
+            df['SMA50'] = ta.trend.SMAIndicator(hist_df['close'], window=50).sma_indicator().iloc[-1]
+            macd = ta.trend.MACD(hist_df['close'])
+            df['MACD'] = macd.macd().iloc[-1]
+            
         return df
             
     except requests.exceptions.RequestException as e:
@@ -365,25 +328,19 @@ def get_tradingview_data(symbol):
         st.error(f"Error processing data: {str(e)}")
         return None
 
-def safe_get(data_list, index, default=None):
-    """Safely get value from list with default value if index error"""
-    try:
-        return data_list[index]
-    except (IndexError, TypeError):
-        return default
-
 def get_technical_analysis(symbol):
     """Get technical analysis for Saudi stocks"""
-    df = get_tradingview_data(symbol)
+    df = get_yahoo_finance_data(symbol)
     
     if df is not None:
         analysis = {
-            'close': df['Close'].iloc[0],
+            'price': df['Close'].iloc[0],
+            'change_percent': df['Change %'].iloc[0],
+            'volume': df['Volume'].iloc[0],
             'rsi': df['RSI'].iloc[0],
             'sma20': df['SMA20'].iloc[0],
             'sma50': df['SMA50'].iloc[0],
-            'macd': df['MACD'].iloc[0],
-            'technical_rating': df['Technical Rating'].iloc[0]
+            'macd': df['MACD'].iloc[0]
         }
         
         signals = []
@@ -395,9 +352,9 @@ def get_technical_analysis(symbol):
             signals.append(("RSI", "Oversold", "BUY"))
             
         # Moving Average Analysis
-        if analysis['close'] > analysis['sma20'] > analysis['sma50']:
+        if analysis['price'] > analysis['sma20'] > analysis['sma50']:
             signals.append(("Moving Averages", "Uptrend", "BUY"))
-        elif analysis['close'] < analysis['sma20'] < analysis['sma50']:
+        elif analysis['price'] < analysis['sma20'] < analysis['sma50']:
             signals.append(("Moving Averages", "Downtrend", "SELL"))
             
         # MACD Analysis
@@ -406,11 +363,7 @@ def get_technical_analysis(symbol):
         elif analysis['macd'] < 0:
             signals.append(("MACD", "Bearish", "SELL"))
             
-        # Overall Technical Rating
-        signals.append(("Overall", f"Rating: {analysis['technical_rating']}", 
-                      "BUY" if analysis['technical_rating'] > 0 else "SELL"))
-        
-        return signals
+        return analysis
     return None
 
 def plot_technical_chart(hist_data):
