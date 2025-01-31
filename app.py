@@ -9,6 +9,24 @@ import torch
 NEWS_API_URL = "https://api.marketaux.com/v1/news/all"
 API_TOKEN = st.secrets["STOCKDATA_API_TOKEN"]
 
+# Add this after the API configuration
+MOCK_NEWS_DATA = [
+    {
+        "title": "CMA Imposes Fine on Arabia Insurance Cooperative Co.",
+        "description": "The Capital Market Authority (CMA) board decided to impose a SAR 10,000 fine on Arabia Insurance Cooperative Co. for violating Paragraph (A) of Article 78 of the Rules on the Offer of Securities and Continuing Obligations.",
+        "source": "Mock Data",
+        "url": "#",
+        "published_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    },
+    {
+        "title": "Saudi Stock Market Shows Strong Performance",
+        "description": "The Saudi stock market (Tadawul) showed positive performance with increased trading volume and market capitalization.",
+        "source": "Mock Data",
+        "url": "#",
+        "published_at": datetime.now().strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    }
+]
+
 @st.cache_resource
 def load_finbert():
     """Load FinBERT model for financial sentiment analysis"""
@@ -157,22 +175,58 @@ def map_roberta_score(result):
     return label_map[result['label']] * result['score']
 
 def fetch_news(published_after, limit=10):
-    """Fetch news articles from the API"""
+    """Fetch news articles from the API with enhanced error handling"""
+    # Ensure limit doesn't exceed plan restrictions
+    api_limit = 3  # Current plan limit
+    actual_limit = min(limit, api_limit)
+    
     params = {
         "countries": "sa",
         "filter_entities": "true",
-        "limit": limit,
+        "limit": actual_limit,  # Use adjusted limit
         "published_after": published_after,
         "api_token": API_TOKEN
     }
     
     try:
-        response = requests.get(NEWS_API_URL, params=params, timeout=10)
-        response.raise_for_status()
-        return response.json().get("data", [])
+        # Add timeout and retry mechanism
+        for attempt in range(3):  # Try up to 3 times
+            try:
+                response = requests.get(NEWS_API_URL, params=params, timeout=15)
+                response.raise_for_status()
+                data = response.json()
+                
+                # Handle API warnings
+                if "warnings" in data:
+                    for warning in data["warnings"]:
+                        st.warning(f"API Warning: {warning}")
+                
+                # Show meta information
+                if "meta" in data:
+                    st.info(f"Found {data['meta']['found']} articles, showing {data['meta']['returned']}")
+                
+                return data.get("data", [])
+                
+            except requests.exceptions.Timeout:
+                if attempt == 2:  # Last attempt
+                    st.error("API request timed out. Please try again later.")
+                continue
+            except requests.exceptions.HTTPError as http_err:
+                if response.status_code == 521:
+                    st.error("The news API server is currently down. Please try again later.")
+                elif response.status_code == 429:
+                    st.error("API rate limit exceeded. Please wait a moment and try again.")
+                else:
+                    st.error(f"HTTP Error: {http_err}")
+                break
+            except requests.exceptions.RequestException:
+                continue
+            
     except Exception as e:
-        st.error(f"Error fetching news: {e}")
-        return []
+        st.error(f"Error fetching news: {str(e)}")
+        st.info("Try refreshing the page or waiting a few minutes before trying again.")
+    
+    return []
 
 def analyze_article_sentiment(article):
     """Analyze sentiment of both title and description with weighted combination"""
@@ -289,7 +343,11 @@ def main():
 
     # Sidebar configuration
     st.sidebar.title("Settings")
-    limit = st.sidebar.slider("Number of articles", 1, 20, 10)
+    max_limit = 3  # Set maximum limit based on API plan
+    limit = st.sidebar.slider("Number of articles", 1, max_limit, max_limit)
+    
+    # Add plan information
+    st.sidebar.info(f"Current plan limit: {max_limit} articles per request")
     
     # Date selection
     default_date = datetime.now() - timedelta(days=7)
