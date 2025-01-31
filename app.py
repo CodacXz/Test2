@@ -8,6 +8,7 @@ import yfinance as yf
 import pandas as pd
 import ta  # Technical Analysis library
 import plotly.graph_objects as go
+import json
 
 # API Configuration
 NEWS_API_URL = "https://api.marketaux.com/v1/news/all"
@@ -514,6 +515,50 @@ def display_article(article):
         
         st.markdown(f"[Read full article]({url})")
         st.markdown("---")
+
+def get_tradingview_data(symbol):
+    """Get stock data from TradingView"""
+    
+    # TradingView API endpoint
+    url = "https://scanner.tradingview.com/saudi/scan"
+    
+    # Request payload for Saudi market
+    payload = {
+        "filter": [{"left": "market_cap_basic", "operation": "nempty"}],
+        "symbols": {"tickers": [f"TADAWUL:{symbol}"]},
+        "columns": [
+            "close",
+            "change",
+            "volume",
+            "market_cap_basic",
+            "price_earnings_ttm",
+            "sector"
+        ]
+    }
+
+    try:
+        response = requests.post(url, json=payload)
+        data = response.json()
+        
+        if 'data' in data and len(data['data']) > 0:
+            stock_data = data['data'][0]
+            
+            return pd.DataFrame({
+                'Symbol': [symbol],
+                'Close': [stock_data['d'][0]],
+                'Change %': [stock_data['d'][1]],
+                'Volume': [stock_data['d'][2]],
+                'Market Cap': [stock_data['d'][3]],
+                'P/E Ratio': [stock_data['d'][4]],
+                'Sector': [stock_data['d'][5]]
+            })
+        else:
+            st.error(f"No data found for symbol {symbol}")
+            return None
+            
+    except Exception as e:
+        st.error(f"Error fetching data: {str(e)}")
+        return None
 
 def main():
     st.title("Saudi Stock Market News")
