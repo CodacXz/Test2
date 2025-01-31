@@ -293,7 +293,7 @@ def get_tradingview_data(symbol):
     # Request payload for Saudi market
     payload = {
         "filter": [{"left": "market_cap_basic", "operation": "nempty"}],
-        "symbols": {"tickers": [f"TADAWUL:{symbol}.SR"]},  # Added .SR suffix
+        "symbols": {"tickers": [f"TADAWUL:{symbol}"]},  # Removed .SR suffix
         "columns": [
             "close",
             "change",
@@ -303,51 +303,74 @@ def get_tradingview_data(symbol):
             "high",
             "low",
             "open",
-            "Recommend.All",  # Technical analysis recommendation
+            "Recommend.All",
             "RSI",
             "SMA20",
             "SMA50",
-            "MACD.macd",
-            "sector"
+            "MACD.macd"
         ]
     }
 
     try:
         headers = {
-            'User-Agent': 'Mozilla/5.0',
-            'Content-Type': 'application/json'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
         }
         
         response = requests.post(url, json=payload, headers=headers)
-        data = response.json()
         
-        if 'data' in data and len(data['data']) > 0:
-            stock_data = data['data'][0]['d']
-            
-            return pd.DataFrame({
-                'Symbol': [f"{symbol}.SR"],
-                'Close': [stock_data[0]],
-                'Change %': [stock_data[1]],
-                'Volume': [stock_data[2]],
-                'Market Cap': [stock_data[3]],
-                'P/E Ratio': [stock_data[4]],
-                'High': [stock_data[5]],
-                'Low': [stock_data[6]],
-                'Open': [stock_data[7]],
-                'Technical Rating': [stock_data[8]],
-                'RSI': [stock_data[9]],
-                'SMA20': [stock_data[10]],
-                'SMA50': [stock_data[11]],
-                'MACD': [stock_data[12]],
-                'Sector': [stock_data[13]]
-            })
-        else:
-            st.error(f"No data found for symbol {symbol}.SR")
+        # Check if response is valid JSON
+        try:
+            data = response.json()
+        except json.JSONDecodeError as e:
+            st.error(f"Invalid JSON response from TradingView API")
+            return None
+        
+        # Debug logging
+        if 'data' not in data:
+            st.error(f"Unexpected API response structure: {data}")
             return None
             
-    except Exception as e:
-        st.error(f"Error fetching data: {str(e)}")
+        if not data['data']:
+            st.warning(f"No data found for symbol TADAWUL:{symbol}")
+            return None
+            
+        stock_data = data['data'][0]['d']
+        
+        # Create DataFrame with safe value extraction
+        df = pd.DataFrame({
+            'Symbol': [symbol],
+            'Close': [safe_get(stock_data, 0)],
+            'Change %': [safe_get(stock_data, 1)],
+            'Volume': [safe_get(stock_data, 2)],
+            'Market Cap': [safe_get(stock_data, 3)],
+            'P/E Ratio': [safe_get(stock_data, 4)],
+            'High': [safe_get(stock_data, 5)],
+            'Low': [safe_get(stock_data, 6)],
+            'Open': [safe_get(stock_data, 7)],
+            'Technical Rating': [safe_get(stock_data, 8)],
+            'RSI': [safe_get(stock_data, 9)],
+            'SMA20': [safe_get(stock_data, 10)],
+            'SMA50': [safe_get(stock_data, 11)],
+            'MACD': [safe_get(stock_data, 12)]
+        })
+        
+        return df
+            
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error when fetching data: {str(e)}")
         return None
+    except Exception as e:
+        st.error(f"Error processing data: {str(e)}")
+        return None
+
+def safe_get(data_list, index, default=None):
+    """Safely get value from list with default value if index error"""
+    try:
+        return data_list[index]
+    except (IndexError, TypeError):
+        return default
 
 def get_technical_analysis(symbol):
     """Get technical analysis for Saudi stocks"""
