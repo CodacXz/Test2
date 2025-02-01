@@ -137,71 +137,70 @@ def display_article(article, companies_df, article_idx):
     
     # Find mentioned companies first
     text = f"{title} {description}"
-    mentioned_companies = []
-    seen = set()
+    mentioned_company = None
     
-    # First pass: collect all unique companies
+    # Find first company mentioned
     for _, row in companies_df.iterrows():
         company_name = str(row['Company_Name']).lower()
         company_code = str(row['Company_Code'])
-        if (company_name in text.lower() or company_code in text.lower()) and company_code not in seen:
-            seen.add(company_code)
-            mentioned_companies.append({
+        if company_name in text.lower() or company_code in text.lower():
+            mentioned_company = {
                 'name': row['Company_Name'],
                 'code': company_code,
                 'symbol': f"{company_code}.SR"
-            })
-    
-    # Skip articles with more than 2 companies
-    if len(mentioned_companies) > 2:
-        st.info(f"Skipping article '{title}' - too many companies mentioned ({len(mentioned_companies)})", 
-                key=f"skip_info_{article_idx}")
-        return
+            }
+            break
     
     # Display article content
-    st.markdown(f"## {title}", key=f"title_{article_idx}")
-    st.write(f"Source: {source} | Published: {published_at[:16]}", key=f"meta_{article_idx}")
-    st.write(description, key=f"desc_{article_idx}")
-    
-    # Sentiment Analysis
-    sentiment, confidence = analyze_sentiment(title + " " + description)
-    
-    col1, col2 = st.columns(2, key=f"cols_{article_idx}")
-    with col1:
-        st.markdown("### Sentiment Analysis", key=f"sent_title_{article_idx}")
-        st.write(f"**Sentiment:** {sentiment}", key=f"sent_value_{article_idx}")
-        st.write(f"**Confidence:** {confidence:.2f}%", key=f"conf_value_{article_idx}")
-    
-    if mentioned_companies:
-        # Show companies mentioned
-        st.write("### Companies Mentioned", key=f"comp_title_{article_idx}")
-        for idx, company in enumerate(mentioned_companies):
-            st.write(f"- {company['name']} ({company['symbol']})", 
-                    key=f"comp_mention_{article_idx}_{idx}")
+    with st.container():
+        st.markdown(f"## {title}", key=f"title_{article_idx}")
+        st.write(f"Source: {source} | Published: {published_at[:16]}", key=f"meta_{article_idx}")
+        st.write(description, key=f"desc_{article_idx}")
         
-        # Show stock analysis one by one
-        st.write("### Stock Analysis", key=f"analysis_title_{article_idx}")
-        for comp_idx, company in enumerate(mentioned_companies):
+        # Sentiment Analysis
+        sentiment, confidence = analyze_sentiment(title + " " + description)
+        
+        col1, col2 = st.columns(2, key=f"cols_{article_idx}")
+        with col1:
+            st.markdown("### Sentiment Analysis", key=f"sent_title_{article_idx}")
+            st.write(f"**Sentiment:** {sentiment}", key=f"sent_value_{article_idx}")
+            st.write(f"**Confidence:** {confidence:.2f}%", key=f"conf_value_{article_idx}")
+        
+        if mentioned_company:
+            st.write("### Company Analysis", key=f"comp_title_{article_idx}")
+            st.write(f"**{mentioned_company['name']} ({mentioned_company['symbol']})**", 
+                    key=f"comp_name_{article_idx}")
+            
             try:
-                df, error = get_stock_data(company['symbol'])
+                df, error = get_stock_data(mentioned_company['symbol'])
                 if error:
-                    st.error(error, key=f"error_{article_idx}_{comp_idx}")
-                    continue
-                
-                if df is not None and not df.empty:
-                    with st.container():
-                        st.subheader(f"{company['name']} Stock Price", 
-                                   key=f"stock_title_{article_idx}_{comp_idx}")
-                        
-                        # Show current price and change first
+                    st.error(error, key=f"error_{article_idx}")
+                else:
+                    if df is not None and not df.empty:
+                        # Show metrics
                         latest_price = df['Close'][-1]
                         price_change = ((latest_price - df['Close'][-2])/df['Close'][-2]*100)
-                        st.metric(
-                            "Current Price", 
-                            f"{latest_price:.2f} SAR",
-                            f"{price_change:.2f}%",
-                            key=f"price_metric_{article_idx}_{comp_idx}"
-                        )
+                        
+                        metrics_cols = st.columns(3)
+                        with metrics_cols[0]:
+                            st.metric(
+                                "Current Price", 
+                                f"{latest_price:.2f} SAR",
+                                f"{price_change:.2f}%",
+                                key=f"price_{article_idx}"
+                            )
+                        with metrics_cols[1]:
+                            st.metric(
+                                "Day High", 
+                                f"{df['High'][-1]:.2f} SAR",
+                                key=f"high_{article_idx}"
+                            )
+                        with metrics_cols[2]:
+                            st.metric(
+                                "Day Low", 
+                                f"{df['Low'][-1]:.2f} SAR",
+                                key=f"low_{article_idx}"
+                            )
                         
                         # Create chart
                         fig = go.Figure()
@@ -225,16 +224,15 @@ def display_article(article, companies_df, article_idx):
                         
                         st.plotly_chart(
                             fig, 
-                            key=f"chart_{article_idx}_{comp_idx}",
+                            key=f"chart_{article_idx}",
                             use_container_width=True
                         )
-                        
             except Exception as e:
-                st.error(f"Error analyzing {company['name']}: {str(e)}", 
-                        key=f"analysis_error_{article_idx}_{comp_idx}")
-    
-    st.markdown(f"[Read full article]({url})", key=f"url_{article_idx}")
-    st.markdown("---", key=f"divider_{article_idx}")
+                st.error(f"Error analyzing {mentioned_company['name']}: {str(e)}", 
+                        key=f"analysis_error_{article_idx}")
+        
+        st.markdown(f"[Read full article]({url})", key=f"url_{article_idx}")
+        st.markdown("---", key=f"divider_{article_idx}")
 
 def main():
     st.title("Saudi Stock Market News", key="main_title")
