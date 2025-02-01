@@ -268,9 +268,10 @@ def display_article(article, companies_df):
     col1, col2 = st.columns(2)
     
     with col1:
-        st.markdown("### Sentiment Analysis")
-        st.write(f"**Sentiment:** {sentiment}")
-        st.write(f"**Confidence:** {confidence:.2f}%")
+        sentiment_key = f"sentiment_{article_id}"
+        st.markdown("### Sentiment Analysis", key=f"sentiment_header_{article_id}")
+        st.write(f"**Sentiment:** {sentiment}", key=f"sentiment_value_{article_id}")
+        st.write(f"**Confidence:** {confidence:.2f}%", key=f"confidence_value_{article_id}")
     
     # Find mentioned companies and deduplicate based on symbol
     mentioned_companies = find_companies_in_text(title + " " + description, companies_df)
@@ -281,21 +282,27 @@ def display_article(article, companies_df):
             if company['symbol'] not in unique_companies:
                 unique_companies[company['symbol']] = company
         
-        # Display companies mentioned
-        st.markdown("### Companies Mentioned")
-        for company in mentioned_companies:
-            st.write(f"{company['name']} ({company['symbol']})")
+        # Display unique companies mentioned
+        companies_header_key = f"companies_header_{article_id}"
+        st.markdown("### Companies Mentioned", key=companies_header_key)
+        
+        # Display each unique company once
+        for idx, company in enumerate(unique_companies.values()):
+            company_mention_key = f"company_mention_{article_id}_{idx}"
+            st.write(f"{company['name']} ({company['symbol']})", key=company_mention_key)
         
         # Analyze each unique company
-        st.markdown("### Stock Analysis")
+        analysis_header_key = f"analysis_header_{article_id}"
+        st.markdown("### Stock Analysis", key=analysis_header_key)
+        
         for idx, company in enumerate(unique_companies.values()):
-            # Create a unique key for the expander based on article and company
             expander_key = f"expander_{article_id}_{company['symbol']}_{idx}"
             with st.expander(f"{company['name']} ({company['symbol']})", key=expander_key):
                 # Get stock data and technical analysis
                 df, error = get_stock_data(company['code'])
                 if error:
-                    st.error(f"Error fetching stock data: {error}")
+                    error_key = f"error_{article_id}_{company['symbol']}_{idx}"
+                    st.error(f"Error fetching stock data: {error}", key=error_key)
                     continue
                 
                 if df is not None:
@@ -405,7 +412,8 @@ def display_article(article, companies_df):
     # Article link
     link_key = f"link_{article_id}"
     st.markdown(f"[Read full article]({url})", key=link_key)
-    st.markdown("---")
+    divider_key = f"divider_{article_id}"
+    st.markdown("---", key=divider_key)
 
 def main():
     st.title("Saudi Stock Market News")
