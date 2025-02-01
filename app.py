@@ -135,6 +135,9 @@ def display_article(article, companies_df, article_idx):
     source = article.get('source', 'Unknown')
     published_at = article.get('published_at', '')
     
+    # Create unique key prefix from title
+    unique_key = f"{hash(title)}_{article_idx}"
+    
     # Find mentioned companies first
     text = f"{title} {description}"
     mentioned_company = None
@@ -153,53 +156,56 @@ def display_article(article, companies_df, article_idx):
     
     # Display article content
     with st.container():
-        st.markdown(f"## {title}", key=f"title_{article_idx}")
-        st.write(f"Source: {source} | Published: {published_at[:16]}", key=f"meta_{article_idx}")
-        st.write(description, key=f"desc_{article_idx}")
+        st.markdown(f"## {title}", key=f"title_{unique_key}")
+        st.write(f"Source: {source} | Published: {published_at[:16]}", key=f"meta_{unique_key}")
+        st.write(description, key=f"desc_{unique_key}")
         
         # Sentiment Analysis
         sentiment, confidence = analyze_sentiment(title + " " + description)
         
-        col1, col2 = st.columns(2, key=f"cols_{article_idx}")
+        col1, col2 = st.columns(2, key=f"cols_{unique_key}")
         with col1:
-            st.markdown("### Sentiment Analysis", key=f"sent_title_{article_idx}")
-            st.write(f"**Sentiment:** {sentiment}", key=f"sent_value_{article_idx}")
-            st.write(f"**Confidence:** {confidence:.2f}%", key=f"conf_value_{article_idx}")
+            st.markdown("### Sentiment Analysis", key=f"sent_title_{unique_key}")
+            st.write(f"**Sentiment:** {sentiment}", key=f"sent_value_{unique_key}")
+            st.write(f"**Confidence:** {confidence:.2f}%", key=f"conf_value_{unique_key}")
         
         if mentioned_company:
-            st.write("### Company Analysis", key=f"comp_title_{article_idx}")
+            # Create unique key for this company in this article
+            company_key = f"{unique_key}_{mentioned_company['code']}"
+            
+            st.write("### Company Analysis", key=f"comp_title_{company_key}")
             st.write(f"**{mentioned_company['name']} ({mentioned_company['symbol']})**", 
-                    key=f"comp_name_{article_idx}")
+                    key=f"comp_name_{company_key}")
             
             try:
                 df, error = get_stock_data(mentioned_company['symbol'])
                 if error:
-                    st.error(error, key=f"error_{article_idx}")
+                    st.error(error, key=f"error_{company_key}")
                 else:
                     if df is not None and not df.empty:
                         # Show metrics
                         latest_price = df['Close'][-1]
                         price_change = ((latest_price - df['Close'][-2])/df['Close'][-2]*100)
                         
-                        metrics_cols = st.columns(3)
+                        metrics_cols = st.columns(3, key=f"metric_cols_{company_key}")
                         with metrics_cols[0]:
                             st.metric(
                                 "Current Price", 
                                 f"{latest_price:.2f} SAR",
                                 f"{price_change:.2f}%",
-                                key=f"price_{article_idx}"
+                                key=f"price_{company_key}"
                             )
                         with metrics_cols[1]:
                             st.metric(
                                 "Day High", 
                                 f"{df['High'][-1]:.2f} SAR",
-                                key=f"high_{article_idx}"
+                                key=f"high_{company_key}"
                             )
                         with metrics_cols[2]:
                             st.metric(
                                 "Day Low", 
                                 f"{df['Low'][-1]:.2f} SAR",
-                                key=f"low_{article_idx}"
+                                key=f"low_{company_key}"
                             )
                         
                         # Create chart
@@ -222,17 +228,19 @@ def display_article(article, companies_df, article_idx):
                             margin=dict(t=0)
                         )
                         
+                        # Use a truly unique key for the chart
+                        chart_key = f"chart_{company_key}_{hash(str(df.index[0]))}"
                         st.plotly_chart(
                             fig, 
-                            key=f"chart_{article_idx}",
+                            key=chart_key,
                             use_container_width=True
                         )
             except Exception as e:
                 st.error(f"Error analyzing {mentioned_company['name']}: {str(e)}", 
-                        key=f"analysis_error_{article_idx}")
+                        key=f"analysis_error_{company_key}")
         
-        st.markdown(f"[Read full article]({url})", key=f"url_{article_idx}")
-        st.markdown("---", key=f"divider_{article_idx}")
+        st.markdown(f"[Read full article]({url})", key=f"url_{unique_key}")
+        st.markdown("---", key=f"divider_{unique_key}")
 
 def main():
     st.title("Saudi Stock Market News", key="main_title")
