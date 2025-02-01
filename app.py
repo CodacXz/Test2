@@ -127,37 +127,6 @@ def get_stock_data(symbol, period='1mo'):
     except Exception as e:
         return None, f"Error fetching data for {symbol}: {str(e)}"
 
-def plot_stock_analysis(df, company_name, symbol, chart_id):
-    """Create an interactive plot with price and indicators"""
-    fig = go.Figure()
-    
-    # Add candlestick chart
-    fig.add_trace(go.Candlestick(
-        x=df.index,
-        open=df['Open'],
-        high=df['High'],
-        low=df['Low'],
-        close=df['Close'],
-        name='Price'
-    ))
-    
-    # Add Bollinger Bands
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_upper'], name='BB Upper',
-                            line=dict(color='gray', dash='dash')))
-    fig.add_trace(go.Scatter(x=df.index, y=df['BB_lower'], name='BB Lower',
-                            line=dict(color='gray', dash='dash')))
-    
-    fig.update_layout(
-        title=f'{company_name} ({symbol}) - Price and Technical Indicators',
-        yaxis_title='Price (SAR)',
-        xaxis_title='Date',
-        template='plotly_dark',
-        height=500
-    )
-    
-    # Use a unique key for each chart
-    st.plotly_chart(fig, key=f"chart_{chart_id}")
-
 def display_article(article, companies_df):
     """Display a single article with analysis"""
     title = article.get('title', 'No title')
@@ -180,23 +149,90 @@ def display_article(article, companies_df):
         st.write(f"**Confidence:** {confidence:.2f}%")
     
     # Find mentioned companies (unique)
-    mentioned_companies = find_companies_in_text(title + " " + description, companies_df)
+    text = f"{title} {description}"
+    mentioned_companies = []
+    seen = set()
+    
+    # First pass: collect all unique companies
+    for _, row in companies_df.iterrows():
+        company_name = str(row['Company_Name']).lower()
+        company_code = str(row['Company_Code'])
+        if (company_name in text.lower() or company_code in text.lower()) and company_code not in seen:
+            seen.add(company_code)
+            mentioned_companies.append({
+                'name': row['Company_Name'],
+                'code': company_code,
+                'symbol': f"{company_code}.SR"
+            })
     
     if mentioned_companies:
+        # Show companies mentioned
         st.write("### Companies Mentioned")
         for company in mentioned_companies:
             st.write(f"- {company['name']} ({company['symbol']})")
         
+        # Show stock analysis one by one
         st.write("### Stock Analysis")
-        for idx, company in enumerate(mentioned_companies):
-            df, error = get_stock_data(company['symbol'])
-            if error:
-                st.error(error)
-                continue
-            
-            if df is not None:
-                # Use company code and index for unique chart ID
-                plot_stock_analysis(df, company['name'], company['symbol'], f"{company['code']}_{idx}")
+        for company in mentioned_companies:
+            try:
+                # Create a unique container for each company's analysis
+                with st.container():
+                    st.subheader(f"{company['name']} Analysis")
+                    df, error = get_stock_data(company['symbol'])
+                    
+                    if error:
+                        st.error(error)
+                        continue
+                    
+                    if df is not None and not df.empty:
+                        fig = go.Figure()
+                        
+                        # Add candlestick chart
+                        fig.add_trace(go.Candlestick(
+                            x=df.index,
+                            open=df['Open'],
+                            high=df['High'],
+                            low=df['Low'],
+                            close=df['Close'],
+                            name='Price'
+                        ))
+                        
+                        # Add Bollinger Bands
+                        fig.add_trace(go.Scatter(
+                            x=df.index, 
+                            y=df['BB_upper'], 
+                            name='BB Upper',
+                            line=dict(color='gray', dash='dash')
+                        ))
+                        fig.add_trace(go.Scatter(
+                            x=df.index, 
+                            y=df['BB_lower'], 
+                            name='BB Lower',
+                            line=dict(color='gray', dash='dash')
+                        ))
+                        
+                        fig.update_layout(
+                            title=f'{company["name"]} ({company["symbol"]}) - Stock Price',
+                            yaxis_title='Price (SAR)',
+                            xaxis_title='Date',
+                            template='plotly_dark',
+                            height=500
+                        )
+                        
+                        # Use a truly unique key for each chart
+                        unique_key = f"chart_{company['code']}_{hash(title)}_{hash(company['name'])}"
+                        st.plotly_chart(fig, key=unique_key)
+                        
+                        # Show current price and change
+                        latest_price = df['Close'][-1]
+                        price_change = ((latest_price - df['Close'][-2])/df['Close'][-2]*100)
+                        st.metric(
+                            "Current Price", 
+                            f"{latest_price:.2f} SAR",
+                            f"{price_change:.2f}%"
+                        )
+            except Exception as e:
+                st.error(f"Error analyzing {company['name']}: {str(e)}")
     
     st.markdown(f"[Read full article]({url})")
     st.markdown("---")
