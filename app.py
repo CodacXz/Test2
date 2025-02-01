@@ -127,7 +127,7 @@ def get_stock_data(symbol, period='1mo'):
     except Exception as e:
         return None, f"Error fetching data for {symbol}: {str(e)}"
 
-def display_article(article, companies_df):
+def display_article(article, companies_df, article_idx):
     """Display a single article with analysis"""
     title = article.get('title', 'No title')
     description = article.get('description', 'No description')
@@ -154,43 +154,44 @@ def display_article(article, companies_df):
     
     # Skip articles with more than 2 companies
     if len(mentioned_companies) > 2:
-        st.info(f"Skipping article '{title}' - too many companies mentioned ({len(mentioned_companies)})")
+        st.info(f"Skipping article '{title}' - too many companies mentioned ({len(mentioned_companies)})", 
+                key=f"skip_info_{article_idx}")
         return
     
     # Display article content
-    st.markdown(f"## {title}")
-    st.write(f"Source: {source} | Published: {published_at[:16]}")
-    st.write(description)
+    st.markdown(f"## {title}", key=f"title_{article_idx}")
+    st.write(f"Source: {source} | Published: {published_at[:16]}", key=f"meta_{article_idx}")
+    st.write(description, key=f"desc_{article_idx}")
     
     # Sentiment Analysis
     sentiment, confidence = analyze_sentiment(title + " " + description)
     
-    col1, col2 = st.columns(2)
+    col1, col2 = st.columns(2, key=f"cols_{article_idx}")
     with col1:
-        st.markdown("### Sentiment Analysis")
-        st.write(f"**Sentiment:** {sentiment}")
-        st.write(f"**Confidence:** {confidence:.2f}%")
+        st.markdown("### Sentiment Analysis", key=f"sent_title_{article_idx}")
+        st.write(f"**Sentiment:** {sentiment}", key=f"sent_value_{article_idx}")
+        st.write(f"**Confidence:** {confidence:.2f}%", key=f"conf_value_{article_idx}")
     
     if mentioned_companies:
         # Show companies mentioned
-        st.write("### Companies Mentioned")
-        for company in mentioned_companies:
-            st.write(f"- {company['name']} ({company['symbol']})")
+        st.write("### Companies Mentioned", key=f"comp_title_{article_idx}")
+        for idx, company in enumerate(mentioned_companies):
+            st.write(f"- {company['name']} ({company['symbol']})", 
+                    key=f"comp_mention_{article_idx}_{idx}")
         
         # Show stock analysis one by one
-        st.write("### Stock Analysis")
-        for company in mentioned_companies:
+        st.write("### Stock Analysis", key=f"analysis_title_{article_idx}")
+        for comp_idx, company in enumerate(mentioned_companies):
             try:
                 df, error = get_stock_data(company['symbol'])
                 if error:
-                    st.error(error)
+                    st.error(error, key=f"error_{article_idx}_{comp_idx}")
                     continue
                 
                 if df is not None and not df.empty:
-                    # Create a unique container for each company
-                    container_key = f"container_{company['code']}_{hash(title)}"
                     with st.container():
-                        st.subheader(f"{company['name']} Stock Price")
+                        st.subheader(f"{company['name']} Stock Price", 
+                                   key=f"stock_title_{article_idx}_{comp_idx}")
                         
                         # Show current price and change first
                         latest_price = df['Close'][-1]
@@ -198,7 +199,8 @@ def display_article(article, companies_df):
                         st.metric(
                             "Current Price", 
                             f"{latest_price:.2f} SAR",
-                            f"{price_change:.2f}%"
+                            f"{price_change:.2f}%",
+                            key=f"price_metric_{article_idx}_{comp_idx}"
                         )
                         
                         # Create chart
@@ -213,56 +215,73 @@ def display_article(article, companies_df):
                         ))
                         
                         fig.update_layout(
-                            title=None,  # Remove title to avoid duplication
+                            title=None,
                             yaxis_title='Price (SAR)',
                             xaxis_title='Date',
                             template='plotly_dark',
                             height=400,
-                            margin=dict(t=0)  # Remove top margin
+                            margin=dict(t=0)
                         )
                         
-                        st.plotly_chart(fig, key=container_key, use_container_width=True)
+                        st.plotly_chart(
+                            fig, 
+                            key=f"chart_{article_idx}_{comp_idx}",
+                            use_container_width=True
+                        )
                         
             except Exception as e:
-                st.error(f"Error analyzing {company['name']}: {str(e)}")
+                st.error(f"Error analyzing {company['name']}: {str(e)}", 
+                        key=f"analysis_error_{article_idx}_{comp_idx}")
     
-    st.markdown(f"[Read full article]({url})")
-    st.markdown("---")
+    st.markdown(f"[Read full article]({url})", key=f"url_{article_idx}")
+    st.markdown("---", key=f"divider_{article_idx}")
 
 def main():
-    st.title("Saudi Stock Market News")
-    st.write("Real-time news analysis for Saudi stock market")
+    st.title("Saudi Stock Market News", key="main_title")
+    st.write("Real-time news analysis for Saudi stock market", key="main_desc")
     
     # Sidebar settings
-    st.sidebar.title("Settings")
-    uploaded_file = st.sidebar.file_uploader("Upload companies file (optional)", type=['csv'])
+    st.sidebar.title("Settings", key="settings_title")
+    uploaded_file = st.sidebar.file_uploader(
+        "Upload companies file (optional)", 
+        type=['csv'],
+        key="file_uploader"
+    )
     
     # Load company data
     companies_df = load_company_data(uploaded_file)
     if companies_df.empty:
-        st.warning("⚠️ No company data loaded")
+        st.warning("⚠️ No company data loaded", key="data_warning")
     else:
-        st.sidebar.success(f"✅ Loaded {len(companies_df)} companies")
+        st.sidebar.success(f"✅ Loaded {len(companies_df)} companies", key="data_success")
     
     # Date selection
     default_date = datetime.now() - timedelta(days=7)
-    published_after = st.date_input("Show news published after:", value=default_date)
+    published_after = st.date_input(
+        "Show news published after:", 
+        value=default_date,
+        key="date_input"
+    )
     published_after_iso = published_after.isoformat() + "T00:00:00"
     
     # Number of articles
-    limit = st.sidebar.slider("Number of articles", 1, 3, 3)
+    limit = st.sidebar.slider(
+        "Number of articles", 
+        1, 3, 3,
+        key="article_limit"
+    )
     
     # Fetch news
-    if st.button("Fetch News"):
+    if st.button("Fetch News", key="fetch_button", use_container_width=True):
         with st.spinner("Fetching latest news..."):
             articles = fetch_news(published_after_iso, limit)
             
             if articles:
-                st.success(f"Found {len(articles)} articles")
-                for article in articles:
-                    display_article(article, companies_df)
+                st.success(f"Found {len(articles)} articles", key="fetch_success")
+                for idx, article in enumerate(articles):
+                    display_article(article, companies_df, idx)
             else:
-                st.warning("No articles found for the selected period")
+                st.warning("No articles found for the selected period", key="fetch_warning")
 
 if __name__ == "__main__":
     main()
