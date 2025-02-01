@@ -14,7 +14,9 @@ import json
 
 # API Configuration
 NEWS_API_URL = "https://api.marketaux.com/v1/news/all"
-API_TOKEN = "W737FzQuSSOm3MyYYLJ1kt7csT8NOwxl2WL7Gl6x"  # Temporary direct key for testing
+
+# Get API key from secrets
+API_TOKEN = st.secrets["general"]["MARKETAUX_API_KEY"]
 
 # GitHub raw file URL for the companies CSV file
 GITHUB_CSV_URL = "https://raw.githubusercontent.com/CodacXz/Test/main/saudi_companies.csv?raw=true"
@@ -127,7 +129,7 @@ def analyze_sentiment(text):
         return "NEUTRAL", 0.5
 
 def fetch_news(published_after, limit=3):
-    """Fetch news articles from MarketAux API"""
+    """Fetch news articles from the MarketAux API"""
     params = {
         "api_token": API_TOKEN,
         "countries": "sa",
@@ -137,20 +139,41 @@ def fetch_news(published_after, limit=3):
     }
     
     try:
-        st.write("Fetching news with params:", params)  # Debug
-        response = requests.get(NEWS_API_URL, params=params, timeout=10)
+        # Increase timeout to 30 seconds and add retries
+        session = requests.Session()
+        adapter = requests.adapters.HTTPAdapter(max_retries=3)
+        session.mount('https://', adapter)
+        
+        response = session.get(
+            NEWS_API_URL,
+            params=params,
+            timeout=30  # Increase timeout to 30 seconds
+        )
+        
+        # Check if the response is valid
         response.raise_for_status()
+        
         data = response.json()
-        st.write("API Response:", data)  # Debug
-        if 'error' in data:
-            st.error(f"API Error: {data['error']['message']}")
-            return []
-        articles = data.get("data", [])
-        st.write(f"Number of articles received: {len(articles)}")  # Debug
-        return articles
+        
+        # Check if we got a valid response with data
+        if "data" not in data:
+            return None, "API response missing data field"
+            
+        if not data["data"]:
+            return None, "No articles found"
+            
+        return data["data"], None
+        
+    except requests.exceptions.Timeout:
+        return None, "Request timed out. Please try again."
+    except requests.exceptions.ConnectionError:
+        return None, "Connection error. Please check your internet connection."
+    except requests.exceptions.RequestException as e:
+        return None, f"Error fetching news: {str(e)}"
+    except ValueError as e:
+        return None, f"Error parsing API response: {str(e)}"
     except Exception as e:
-        st.error(f"Error fetching news: {e}")
-        return []
+        return None, f"Unexpected error: {str(e)}"
 
 def get_stock_data(symbol, period='1mo'):
     """Fetch stock data and calculate technical indicators"""
@@ -409,44 +432,76 @@ def main():
     st.title("Saudi Stock Market News")
     st.write("Real-time news analysis for Saudi stock market")
 
-    # File upload option in sidebar
-    st.sidebar.title("Settings")
+    # Add version number to sidebar
+    st.sidebar.markdown("App Version: 1.0.5")
+    
+    # File uploader in sidebar
     uploaded_file = st.sidebar.file_uploader("Upload companies file (optional)", type=['csv'])
     
-    # Load company data
-    companies_df = load_company_data(uploaded_file)
-    if companies_df.empty:
-        st.warning("⚠️ No company data loaded. Either upload a CSV file or update the GitHub URL in the code.")
-    else:
-        st.sidebar.success(f"✅ Loaded {len(companies_df)} companies")
-
-    # Rest of the settings
-    limit = st.sidebar.slider("Number of articles", 1, 3, 3)
+    # Number of articles selector
+    num_articles = st.sidebar.slider("Number of articles", min_value=1, max_value=10, value=3)
     
-    # Date selection
-    default_date = datetime.now() - timedelta(days=7)
-    published_after = st.date_input("Show news published after:", value=default_date)
-    published_after_iso = published_after.isoformat() + "T00:00:00"
-
+    # Load companies data
+    companies_df = None
+    if uploaded_file is not None:
+        try:
+            companies_df = pd.read_csv(uploaded_file)
+            st.sidebar.success(f"✅ Successfully loaded {len(companies_df)} companies")
+        except Exception as e:
+            st.sidebar.error(f"Error loading file: {str(e)}")
+    else:
+        try:
+            companies_df = pd.read_csv(GITHUB_CSV_URL)
+            st.sidebar.success(f"✅ Loaded {len(companies_df)} companies")
+        except Exception as e:
+            st.sidebar.error(f"Error loading companies from GitHub: {str(e)}")
+    
+    if companies_df is None:
+        st.error("No company data available. Please upload a CSV file or check the GitHub URL.")
+        return
+    
+    # Date selector for news with better defaults and validation for 2025
+    today = datetime.now().date()
+    default_date = today - timedelta(days=1)  # Default to yesterday
+    
+    published_after = st.date_input(
+        "Show news published after:",
+        value=default_date,
+        min_value=datetime(2025, 1, 1).date(),  # Start of 2025
+        max_value=today
+    )
+    
+    # Check if API token is loaded
+    if API_TOKEN:
+        st.sidebar.success("✅ API Token loaded")
+    else:
+        st.error("❌ API Token not found")
+        return
+    
     # Fetch and display news
-    if st.button("Fetch News"):
-        with st.spinner("Fetching latest news..."):
-            news_articles = fetch_news(published_after_iso, limit)
+    if published_after:
+        # Format date in YYYY/MM/DD format as required by the API
+        formatted_date = published_after.strftime("%Y/%m/%d")
+        
+        with st.spinner('Fetching news...'):
+            news_articles, error = fetch_news(formatted_date, num_articles)
             
-            if news_articles:
+            if error:
+                st.error(f"Error fetching news: {error}")
+                # Add a helpful message about date range
+                if "No articles found" in error:
+                    st.info("Try selecting a more recent date. The API might have limited historical data.")
+            elif news_articles:
                 st.success(f"Found {len(news_articles)} articles")
-                # Pass article index to display_article
-                for idx, article in enumerate(news_articles):
+                for article in news_articles:
                     display_article(article, companies_df)
             else:
                 st.warning("No news articles found for the selected date range")
-
+                st.info("Try selecting a more recent date or increasing the number of articles.")
+    
     # App information
     st.sidebar.markdown("---")
     st.sidebar.write("App Version: 1.0.5")
-    
-    # API status
-    st.sidebar.success("✅ API Token loaded")
     
     # Add GitHub information
     st.sidebar.markdown("---")
