@@ -11,7 +11,13 @@ from ta.volatility import BollingerBands
 
 # API Configuration
 NEWS_API_URL = "https://api.marketaux.com/v1/news/all"
-API_TOKEN = st.secrets["general"]["MARKETAUX_API_KEY"]
+
+# Get API key from secrets with fallback
+try:
+    API_TOKEN = st.secrets["general"]["MARKETAUX_API_KEY"]
+except Exception as e:
+    st.error("Error loading API key. Please check your secrets.toml file.")
+    st.stop()
 
 @st.cache_data
 def load_company_data(uploaded_file=None):
