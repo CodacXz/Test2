@@ -139,33 +139,55 @@ def fetch_news(published_after, limit=3):
     }
     
     try:
-        # Increase timeout to 30 seconds and add retries
+        # Create a session with custom timeout and retry settings
         session = requests.Session()
-        adapter = requests.adapters.HTTPAdapter(max_retries=3)
-        session.mount('https://', adapter)
         
+        # Configure retry strategy
+        retry_strategy = requests.adapters.Retry(
+            total=3,  # number of retries
+            backoff_factor=1,  # wait 1, 2, 4 seconds between retries
+            status_forcelist=[429, 500, 502, 503, 504]  # retry on these status codes
+        )
+        
+        # Mount the adapter with retry strategy for both http and https
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Set timeout for both connect and read operations
+        timeout = (5, 30)  # (connect timeout, read timeout) in seconds
+        
+        # Make the request with the session
         response = session.get(
             NEWS_API_URL,
             params=params,
-            timeout=30  # Increase timeout to 30 seconds
+            timeout=timeout,
+            verify=True  # Ensure SSL verification is enabled
         )
         
         # Check if the response is valid
         response.raise_for_status()
         
+        # Parse the response
         data = response.json()
+        
+        # Check for API-level errors
+        if "error" in data:
+            error_msg = data.get("error", {}).get("message", "Unknown API error")
+            return None, f"API Error: {error_msg}"
         
         # Check if we got a valid response with data
         if "data" not in data:
             return None, "API response missing data field"
             
-        if not data["data"]:
-            return None, "No articles found"
+        articles = data.get("data", [])
+        if not articles:
+            return None, "No articles found for the specified date range"
             
-        return data["data"], None
+        return articles, None
         
     except requests.exceptions.Timeout:
-        return None, "Request timed out. Please try again."
+        return None, "Request timed out after 30 seconds. The server might be busy, please try again."
     except requests.exceptions.ConnectionError:
         return None, "Connection error. Please check your internet connection."
     except requests.exceptions.RequestException as e:
@@ -431,7 +453,7 @@ def display_article(article, companies_df):
 def main():
     st.title("Saudi Stock Market News")
     st.write("Real-time news analysis for Saudi stock market")
-
+    
     # Add version number to sidebar
     st.sidebar.markdown("App Version: 1.0.5")
     
@@ -472,11 +494,11 @@ def main():
     )
     
     # Check if API token is loaded
-    if API_TOKEN:
-        st.sidebar.success("✅ API Token loaded")
-    else:
-        st.error("❌ API Token not found")
+    if not API_TOKEN:
+        st.error("❌ API Token not found in secrets.toml")
         return
+    else:
+        st.sidebar.success("✅ API Token loaded")
     
     # Fetch and display news
     if published_after:
@@ -487,9 +509,15 @@ def main():
             news_articles, error = fetch_news(formatted_date, num_articles)
             
             if error:
-                st.error(f"Error fetching news: {error}")
-                # Add a helpful message about date range
-                if "No articles found" in error:
+                st.error(error)
+                if "timed out" in error.lower():
+                    st.info("The server is taking longer than expected to respond. You can try:")
+                    st.markdown("""
+                    - Reducing the number of articles requested
+                    - Trying a different date range
+                    - Waiting a few minutes and trying again
+                    """)
+                elif "No articles found" in error:
                     st.info("Try selecting a more recent date. The API might have limited historical data.")
             elif news_articles:
                 st.success(f"Found {len(news_articles)} articles")
