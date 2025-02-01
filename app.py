@@ -135,20 +135,7 @@ def display_article(article, companies_df):
     source = article.get('source', 'Unknown')
     published_at = article.get('published_at', '')
     
-    st.markdown(f"## {title}")
-    st.write(f"Source: {source} | Published: {published_at[:16]}")
-    st.write(description)
-    
-    # Sentiment Analysis
-    sentiment, confidence = analyze_sentiment(title + " " + description)
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        st.markdown("### Sentiment Analysis")
-        st.write(f"**Sentiment:** {sentiment}")
-        st.write(f"**Confidence:** {confidence:.2f}%")
-    
-    # Find mentioned companies (unique)
+    # Find mentioned companies first
     text = f"{title} {description}"
     mentioned_companies = []
     seen = set()
@@ -165,6 +152,25 @@ def display_article(article, companies_df):
                 'symbol': f"{company_code}.SR"
             })
     
+    # Skip articles with more than 2 companies
+    if len(mentioned_companies) > 2:
+        st.info(f"Skipping article '{title}' - too many companies mentioned ({len(mentioned_companies)})")
+        return
+    
+    # Display article content
+    st.markdown(f"## {title}")
+    st.write(f"Source: {source} | Published: {published_at[:16]}")
+    st.write(description)
+    
+    # Sentiment Analysis
+    sentiment, confidence = analyze_sentiment(title + " " + description)
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### Sentiment Analysis")
+        st.write(f"**Sentiment:** {sentiment}")
+        st.write(f"**Confidence:** {confidence:.2f}%")
+    
     if mentioned_companies:
         # Show companies mentioned
         st.write("### Companies Mentioned")
@@ -175,19 +181,28 @@ def display_article(article, companies_df):
         st.write("### Stock Analysis")
         for company in mentioned_companies:
             try:
-                # Create a unique container for each company's analysis
-                with st.container():
-                    st.subheader(f"{company['name']} Analysis")
-                    df, error = get_stock_data(company['symbol'])
-                    
-                    if error:
-                        st.error(error)
-                        continue
-                    
-                    if df is not None and not df.empty:
-                        fig = go.Figure()
+                df, error = get_stock_data(company['symbol'])
+                if error:
+                    st.error(error)
+                    continue
+                
+                if df is not None and not df.empty:
+                    # Create a unique container for each company
+                    container_key = f"container_{company['code']}_{hash(title)}"
+                    with st.container():
+                        st.subheader(f"{company['name']} Stock Price")
                         
-                        # Add candlestick chart
+                        # Show current price and change first
+                        latest_price = df['Close'][-1]
+                        price_change = ((latest_price - df['Close'][-2])/df['Close'][-2]*100)
+                        st.metric(
+                            "Current Price", 
+                            f"{latest_price:.2f} SAR",
+                            f"{price_change:.2f}%"
+                        )
+                        
+                        # Create chart
+                        fig = go.Figure()
                         fig.add_trace(go.Candlestick(
                             x=df.index,
                             open=df['Open'],
@@ -197,40 +212,17 @@ def display_article(article, companies_df):
                             name='Price'
                         ))
                         
-                        # Add Bollinger Bands
-                        fig.add_trace(go.Scatter(
-                            x=df.index, 
-                            y=df['BB_upper'], 
-                            name='BB Upper',
-                            line=dict(color='gray', dash='dash')
-                        ))
-                        fig.add_trace(go.Scatter(
-                            x=df.index, 
-                            y=df['BB_lower'], 
-                            name='BB Lower',
-                            line=dict(color='gray', dash='dash')
-                        ))
-                        
                         fig.update_layout(
-                            title=f'{company["name"]} ({company["symbol"]}) - Stock Price',
+                            title=None,  # Remove title to avoid duplication
                             yaxis_title='Price (SAR)',
                             xaxis_title='Date',
                             template='plotly_dark',
-                            height=500
+                            height=400,
+                            margin=dict(t=0)  # Remove top margin
                         )
                         
-                        # Use a truly unique key for each chart
-                        unique_key = f"chart_{company['code']}_{hash(title)}_{hash(company['name'])}"
-                        st.plotly_chart(fig, key=unique_key)
+                        st.plotly_chart(fig, key=container_key, use_container_width=True)
                         
-                        # Show current price and change
-                        latest_price = df['Close'][-1]
-                        price_change = ((latest_price - df['Close'][-2])/df['Close'][-2]*100)
-                        st.metric(
-                            "Current Price", 
-                            f"{latest_price:.2f} SAR",
-                            f"{price_change:.2f}%"
-                        )
             except Exception as e:
                 st.error(f"Error analyzing {company['name']}: {str(e)}")
     
