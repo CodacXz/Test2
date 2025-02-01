@@ -135,13 +135,17 @@ def fetch_news(published_after, limit=3):
     }
     
     try:
+        st.write("Fetching news with params:", params)  # Debug
         response = requests.get(NEWS_API_URL, params=params, timeout=10)
         response.raise_for_status()
         data = response.json()
+        st.write("API Response:", data)  # Debug
         if 'error' in data:
             st.error(f"API Error: {data['error']['message']}")
             return []
-        return data.get("data", [])
+        articles = data.get("data", [])
+        st.write(f"Number of articles received: {len(articles)}")  # Debug
+        return articles
     except Exception as e:
         st.error(f"Error fetching news: {e}")
         return []
@@ -265,58 +269,75 @@ def display_article(article, companies_df):
         st.write(f"**Sentiment:** {sentiment}")
         st.write(f"**Confidence:** {confidence:.2f}%")
     
-    # Find mentioned companies
+    # Find mentioned companies and deduplicate based on symbol
     mentioned_companies = find_companies_in_text(title + " " + description, companies_df)
-    
     if mentioned_companies:
+        # Create a dictionary to deduplicate companies by symbol
+        unique_companies = {}
         for company in mentioned_companies:
-            st.markdown(f"### Company Analysis: {company['name']} ({company['symbol']})")
-            
-            # Get stock data and technical analysis
-            df, error = get_stock_data(company['code'])
-            if error:
-                st.error(f"Error fetching stock data: {error}")
-                continue
-            
-            if df is not None:
-                # Show current stock price
-                latest_price = df['Close'][-1]
-                st.metric("Current Price", f"{latest_price:.2f} SAR", 
-                         f"{((latest_price - df['Close'][-2])/df['Close'][-2]*100):.2f}%")
+            if company['symbol'] not in unique_companies:
+                unique_companies[company['symbol']] = company
+        
+        # Display companies mentioned
+        st.markdown("### Companies Mentioned")
+        for company in mentioned_companies:
+            st.write(f"{company['name']} ({company['symbol']})")
+        
+        # Analyze each unique company
+        st.markdown("### Stock Analysis")
+        for company in unique_companies.values():
+            with st.expander(f"{company['name']} ({company['symbol']})"):
+                # Get stock data and technical analysis
+                df, error = get_stock_data(company['code'])
+                if error:
+                    st.error(f"Error fetching stock data: {error}")
+                    continue
                 
-                # Plot stock chart
-                fig = plot_stock_analysis(df, company['name'], company['symbol'])
-                
-                # Technical Analysis Signals
-                st.markdown("### Technical Analysis Signals")
-                signals = analyze_technical_indicators(df)
-                
-                # Create a clean table for signals
-                signal_df = pd.DataFrame(signals, columns=['Indicator', 'Signal', 'Reason'])
-                st.table(signal_df)
-                
-                # Combined Analysis
-                st.markdown("### Combined Analysis")
-                tech_sentiment = sum(1 if signal[1] == "BULLISH" else -1 if signal[1] == "BEARISH" else 0 for signal in signals)
-                news_sentiment_score = 1 if sentiment == "POSITIVE" else -1 if sentiment == "NEGATIVE" else 0
-                
-                combined_score = (tech_sentiment + news_sentiment_score) / (len(signals) + 1)
-                
-                if combined_score > 0.3:
-                    st.success("🟢 Overall Bullish: Technical indicators and news sentiment suggest positive momentum")
-                elif combined_score < -0.3:
-                    st.error("🔴 Overall Bearish: Technical indicators and news sentiment suggest negative pressure")
-                else:
-                    st.warning("🟡 Neutral: Mixed signals from technical indicators and news sentiment")
-                
-                # Volume Analysis
-                avg_volume = df['Volume'].mean()
-                latest_volume = df['Volume'][-1]
-                volume_change = ((latest_volume - avg_volume) / avg_volume) * 100
-                
-                st.markdown("### Volume Analysis")
-                st.metric("Trading Volume", f"{int(latest_volume):,}", 
-                         f"{volume_change:.1f}% vs 30-day average")
+                if df is not None:
+                    # Show current stock price
+                    latest_price = df['Close'][-1]
+                    st.metric("Current Price", f"{latest_price:.2f} SAR", 
+                             f"{((latest_price - df['Close'][-2])/df['Close'][-2]*100):.2f}%")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Day High", f"{df['High'][-1]:.2f} SAR")
+                    with col2:
+                        st.metric("Day Low", f"{df['Low'][-1]:.2f} SAR")
+                    
+                    # Plot stock chart
+                    fig = plot_stock_analysis(df, company['name'], company['symbol'])
+                    
+                    # Technical Analysis Signals
+                    st.markdown("### Technical Analysis Signals")
+                    signals = analyze_technical_indicators(df)
+                    
+                    # Create a clean table for signals
+                    signal_df = pd.DataFrame(signals, columns=['Indicator', 'Signal', 'Reason'])
+                    st.table(signal_df)
+                    
+                    # Combined Analysis
+                    st.markdown("### Combined Analysis")
+                    tech_sentiment = sum(1 if signal[1] == "BULLISH" else -1 if signal[1] == "BEARISH" else 0 for signal in signals)
+                    news_sentiment_score = 1 if sentiment == "POSITIVE" else -1 if sentiment == "NEGATIVE" else 0
+                    
+                    combined_score = (tech_sentiment + news_sentiment_score) / (len(signals) + 1)
+                    
+                    if combined_score > 0.3:
+                        st.success("🟢 Overall Bullish: Technical indicators and news sentiment suggest positive momentum")
+                    elif combined_score < -0.3:
+                        st.error("🔴 Overall Bearish: Technical indicators and news sentiment suggest negative pressure")
+                    else:
+                        st.warning("🟡 Neutral: Mixed signals from technical indicators and news sentiment")
+                    
+                    # Volume Analysis
+                    avg_volume = df['Volume'].mean()
+                    latest_volume = df['Volume'][-1]
+                    volume_change = ((latest_volume - avg_volume) / avg_volume) * 100
+                    
+                    st.markdown("### Volume Analysis")
+                    st.metric("Trading Volume", f"{int(latest_volume):,}", 
+                             f"{volume_change:.1f}% vs 30-day average")
     
     # Article link
     st.markdown(f"[Read full article]({url})")
