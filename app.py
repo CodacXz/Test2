@@ -500,46 +500,41 @@ def get_technical_signals(analysis):
         
     return signals
 
+def extract_company_name(text):
+    """Extract company name from text using simple rules"""
+    # List of common company indicators
+    indicators = [
+        "company", "corp", "corporation", "inc", "ltd", "limited",
+        "bank", "group", "holding", "شركة", "بنك", "مجموعة"
+    ]
+    
+    # Split text into sentences
+    sentences = text.split(".")
+    
+    for sentence in sentences:
+        # Look for company indicators
+        for indicator in indicators:
+            if indicator.lower() in sentence.lower():
+                # Get the surrounding words
+                words = sentence.split()
+                idx = next((i for i, word in enumerate(words) 
+                          if indicator.lower() in word.lower()), None)
+                if idx is not None:
+                    # Take up to 3 words before the indicator
+                    start = max(0, idx - 3)
+                    company = " ".join(words[start:idx+1])
+                    return company.strip()
+    
+    return None
+
 def get_symbol_from_name(company_name):
     """Map company name to stock symbol"""
-    # Common company name variations to symbol mapping
-    company_map = {
-        # Banks
-        "al rajhi": "1120",
-        "alrajhi": "1120",
-        "sns": "1180",
-        "saudi national bank": "1180",
-        "alinma": "1150",
-        "al inma": "1150",
-        
-        # Energy & Materials
-        "aramco": "2222",
-        "saudi aramco": "2222",
-        "sabic": "2010",
-        "saudi basic industries": "2010",
-        "maaden": "1211",
-        "saudi arabian mining": "1211",
-        
-        # Healthcare
-        "canadian medical": "9518",
-        "canadian medical center": "9518",
-        "dallah health": "4004",
-        "mouwasat": "4002",
-        
-        # Add more mappings as needed
-    }
-    
     # Clean and normalize the company name
     name = company_name.lower().strip()
     
-    # Try exact match first
-    if name in company_map:
-        return company_map[name]
-    
-    # Try partial matches
-    for key, symbol in company_map.items():
-        if key in name or name in key:
-            return symbol
+    # Simple mapping for Canadian Medical Center
+    if "canadian medical" in name:
+        return "9518"
     
     return None
 
@@ -606,33 +601,6 @@ def display_article(article):
     
     st.markdown(f"[Read full article]({url})")
     st.markdown("---")
-
-def extract_company_name(text):
-    """Extract company name from text using simple rules"""
-    # List of common company indicators
-    indicators = [
-        "company", "corp", "corporation", "inc", "ltd", "limited",
-        "bank", "group", "holding", "شركة", "بنك", "مجموعة"
-    ]
-    
-    # Split text into sentences
-    sentences = text.split(".")
-    
-    for sentence in sentences:
-        # Look for company indicators
-        for indicator in indicators:
-            if indicator.lower() in sentence.lower():
-                # Get the surrounding words
-                words = sentence.split()
-                idx = next((i for i, word in enumerate(words) 
-                          if indicator.lower() in word.lower()), None)
-                if idx is not None:
-                    # Take up to 3 words before the indicator
-                    start = max(0, idx - 3)
-                    company = " ".join(words[start:idx+1])
-                    return company.strip()
-    
-    return None
 
 def get_alpha_vantage_data(symbol):
     """Get stock data from Alpha Vantage with enhanced Saudi market support"""
