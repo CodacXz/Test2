@@ -569,15 +569,15 @@ def display_article(article):
     # Display sentiment analysis
     sentiment, confidence, details = analyze_article_sentiment(article)
     
-                            col1, col2 = st.columns(2)
-                            with col1:
+    col1, col2 = st.columns(2)
+    with col1:
         st.write("### Sentiment Analysis")
         st.write(f"Overall: {sentiment}")
         st.write(f"Confidence: {confidence:.2f}")
     
     # If we found a company symbol, show technical analysis
     if symbol:
-                            with col2:
+        with col2:
             st.write("### Technical Analysis")
             st.write(f"Company: {company_name} ({symbol})")
             
@@ -595,17 +595,17 @@ def display_article(article):
                 
                 # Plot chart if historical data is available
                 if 'historical_data' in analysis:
-                            st.plotly_chart(plot_technical_chart(analysis['historical_data']))
-                            
-                            # Display trading signals
-                            signals = get_technical_signals(analysis)
-                            if signals:
-                                st.write("### Trading Signals")
-                                for indicator, condition, signal in signals:
-                                    st.write(f"- {indicator}: {condition} ({signal})")
-        
-        st.markdown(f"[Read full article]({url})")
-        st.markdown("---")
+                    st.plotly_chart(plot_technical_chart(analysis['historical_data']))
+                
+                # Display trading signals
+                signals = get_technical_signals(analysis)
+                if signals:
+                    st.write("### Trading Signals")
+                    for indicator, condition, signal in signals:
+                        st.write(f"- {indicator}: {condition} ({signal})")
+    
+    st.markdown(f"[Read full article]({url})")
+    st.markdown("---")
 
 def extract_company_name(text):
     """Extract company name from text using simple rules"""
