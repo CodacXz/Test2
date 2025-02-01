@@ -57,27 +57,31 @@ def load_company_data(uploaded_file=None):
         return pd.DataFrame()
 
 def find_companies_in_text(text, companies_df):
-    """Find all companies mentioned in the text"""
-    if companies_df.empty:
-        return []
+    """Find company mentions in text and return unique matches"""
+    found_companies = []
+    seen_symbols = set()  # Track symbols we've already found
     
+    # Convert text to lowercase for case-insensitive matching
     text = text.lower()
-    mentioned_companies = []
     
-    # Search for each company in the text
-    for _, row in companies_df.iterrows():
-        company_name = str(row['Company_Name']).lower()
-        company_code = str(row['Company_Code']).zfill(4)  # Ensure 4-digit format
+    for _, company in companies_df.iterrows():
+        name = str(company['Company_Name']).lower()
+        symbol = str(company['Company_Code'])
         
-        # Check if company name or code is in text
-        if company_name in text or company_code in text:
-            mentioned_companies.append({
-                'code': company_code,  # This will be 4 digits
-                'name': row['Company_Name'],
-                'symbol': f"{company_code}.SR"  # Add Saudi market suffix
+        # Skip if we've already found this company
+        if symbol in seen_symbols:
+            continue
+        
+        # Check for company name or code in text
+        if name in text or symbol in text:
+            seen_symbols.add(symbol)
+            found_companies.append({
+                'name': company['Company_Name'],
+                'symbol': f"{symbol}.SR",
+                'code': symbol
             })
     
-    return mentioned_companies
+    return found_companies
 
 def find_company_code(text, companies_df):
     """Find company code from news text"""
@@ -289,14 +293,15 @@ def plot_stock_analysis(df, company_name, symbol):
     chart_key = f"stock_chart_{symbol}_{pd.Timestamp.now().strftime('%Y%m%d%H%M%S%f')}"
     st.plotly_chart(fig, use_container_width=True, key=chart_key)
 
-def get_unique_id(article):
+def get_unique_id(article, suffix=""):
     """Generate a unique ID for an article based on its content"""
     # Create a string containing all relevant article data
     content = json.dumps({
         'title': article.get('title', ''),
         'description': article.get('description', ''),
         'url': article.get('url', ''),
-        'published_at': article.get('published_at', '')
+        'published_at': article.get('published_at', ''),
+        'suffix': suffix  # Add suffix to make IDs unique when needed
     }, sort_keys=True)
     
     # Create a hash of the content
@@ -304,152 +309,170 @@ def get_unique_id(article):
 
 def display_article(article, companies_df):
     """Display news article with sentiment and technical analysis"""
-    title = article.get("title", "No title")
-    description = article.get("description", "No description")
-    url = article.get("url", "#")
-    source = article.get("source", "Unknown")
-    published_at = article.get("published_at", "")
-    
-    # Generate a unique ID for this article using content hash
-    article_id = get_unique_id(article)
-    
-    st.markdown(f"## {title}", key=f"title_{article_id}")
-    
-    # Display source and date
-    st.write(f"Source: {source} | Published: {published_at[:16]}", key=f"source_{article_id}")
-    
-    # Display description
-    st.write(description[:200] + "..." if len(description) > 200 else description, key=f"desc_{article_id}")
-    
-    # Sentiment Analysis
-    sentiment, confidence = analyze_sentiment(title + " " + description)
-    
-    with st.container():
-        st.markdown("### Sentiment Analysis", key=f"sentiment_header_{article_id}")
-        st.write(f"**Sentiment:** {sentiment}", key=f"sentiment_value_{article_id}")
-        st.write(f"**Confidence:** {confidence:.2f}%", key=f"confidence_value_{article_id}")
-    
-    # Find mentioned companies and deduplicate based on symbol
-    mentioned_companies = find_companies_in_text(title + " " + description, companies_df)
-    if mentioned_companies:
-        # Create a dictionary to deduplicate companies by symbol
-        unique_companies = {}
-        for company in mentioned_companies:
-            if company['symbol'] not in unique_companies:
-                unique_companies[company['symbol']] = company
+    try:
+        title = article.get("title", "No title")
+        description = article.get("description", "No description")
+        url = article.get("url", "#")
+        source = article.get("source", "Unknown")
+        published_at = article.get("published_at", "")
         
-        # Display unique companies mentioned
-        with st.container():
-            st.markdown("### Companies Mentioned", key=f"companies_header_{article_id}")
-            for company in unique_companies.values():
-                st.write(f"{company['name']} ({company['symbol']})", key=f"mention_{article_id}_{company['symbol']}")
+        # Generate a unique ID for this article
+        article_id = get_unique_id(article)
         
-        # Analyze each unique company
         with st.container():
-            st.markdown("### Stock Analysis", key=f"analysis_header_{article_id}")
+            st.markdown(f"## {title}", key=f"title_{article_id}")
             
-            for company in unique_companies.values():
-                company_key = f"{article_id}_{company['symbol']}"
-                with st.expander(f"{company['name']} ({company['symbol']})", key=f"expander_{company_key}"):
-                    # Get stock data and technical analysis
-                    df, error = get_stock_data(company['code'])
-                    if error:
-                        st.error(f"Error fetching stock data: {error}", key=f"error_{company_key}")
-                        continue
+            # Display source and date
+            st.write(f"Source: {source} | Published: {published_at[:16]}", key=f"source_{article_id}")
+            
+            # Display description
+            st.write(description[:200] + "..." if len(description) > 200 else description, key=f"desc_{article_id}")
+            
+            # Sentiment Analysis
+            sentiment, confidence = analyze_sentiment(title + " " + description)
+            
+            with st.container():
+                st.markdown("### Sentiment Analysis", key=f"sentiment_header_{article_id}")
+                st.write(f"**Sentiment:** {sentiment}", key=f"sentiment_value_{article_id}")
+                st.write(f"**Confidence:** {confidence:.2f}%", key=f"confidence_value_{article_id}")
+            
+            # Find mentioned companies and deduplicate based on symbol
+            mentioned_companies = find_companies_in_text(title + " " + description, companies_df)
+            
+            if mentioned_companies:
+                with st.container():
+                    st.markdown("### Companies Mentioned", key=f"companies_header_{article_id}")
+                    # Display each company only once in the mentions list
+                    seen_companies = set()
+                    for company in mentioned_companies:
+                        if company['symbol'] not in seen_companies:
+                            seen_companies.add(company['symbol'])
+                            st.write(f"{company['name']} ({company['symbol']})", key=f"mention_{article_id}_{company['symbol']}")
+                
+                # Analyze each unique company
+                with st.container():
+                    st.markdown("### Stock Analysis", key=f"analysis_header_{article_id}")
                     
-                    if df is not None:
-                        with st.container():
-                            # Show current stock price
-                            latest_price = df['Close'][-1]
-                            st.metric(
-                                "Current Price",
-                                f"{latest_price:.2f} SAR",
-                                f"{((latest_price - df['Close'][-2])/df['Close'][-2]*100):.2f}%",
-                                key=f"price_{company_key}"
-                            )
+                    # Create a set to track unique companies we've analyzed
+                    analyzed_companies = set()
+                    
+                    for idx, company in enumerate(mentioned_companies):
+                        # Skip if we've already analyzed this company
+                        if company['symbol'] in analyzed_companies:
+                            continue
                             
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.metric("Day High", f"{df['High'][-1]:.2f} SAR", key=f"high_{company_key}")
-                            with col2:
-                                st.metric("Day Low", f"{df['Low'][-1]:.2f} SAR", key=f"low_{company_key}")
+                        analyzed_companies.add(company['symbol'])
                         
-                        with st.container():
-                            # Plot stock chart
-                            fig = go.Figure()
-                            fig.add_trace(
-                                go.Candlestick(
-                                    x=df.index,
-                                    open=df['Open'],
-                                    high=df['High'],
-                                    low=df['Low'],
-                                    close=df['Close'],
-                                    name='Price'
-                                )
-                            )
-                            fig.add_trace(
-                                go.Bar(
-                                    x=df.index,
-                                    y=df['Volume'],
-                                    name='Volume',
-                                    yaxis='y2',
-                                    opacity=0.3
-                                )
-                            )
-                            fig.update_layout(
-                                title=f'{company["name"]} ({company["symbol"]}) - Price and Volume',
-                                yaxis_title='Price (SAR)',
-                                yaxis2=dict(
-                                    title='Volume',
-                                    overlaying='y',
-                                    side='right'
-                                ),
-                                height=400,
-                                showlegend=True
-                            )
-                            st.plotly_chart(fig, use_container_width=True, key=f"chart_{company_key}")
-                        
-                        with st.container():
-                            # Technical Analysis Signals
-                            st.markdown("### Technical Analysis Signals", key=f"signals_header_{company_key}")
-                            signals = analyze_technical_indicators(df)
-                            signal_df = pd.DataFrame(signals, columns=['Indicator', 'Signal', 'Reason'])
-                            st.table(signal_df, key=f"table_{company_key}")
-                        
-                        with st.container():
-                            # Combined Analysis
-                            st.markdown("### Combined Analysis", key=f"analysis_title_{company_key}")
-                            tech_sentiment = sum(1 if signal[1] == "BULLISH" else -1 if signal[1] == "BEARISH" else 0 for signal in signals)
-                            news_sentiment_score = 1 if sentiment == "POSITIVE" else -1 if sentiment == "NEGATIVE" else 0
+                        try:
+                            # Create a unique key for this company analysis
+                            company_key = get_unique_id(article, f"{company['symbol']}_{idx}")
                             
-                            combined_score = (tech_sentiment + news_sentiment_score) / (len(signals) + 1)
-                            
-                            if combined_score > 0.3:
-                                st.success("🟢 Overall Bullish: Technical indicators and news sentiment suggest positive momentum", key=f"score_{company_key}")
-                            elif combined_score < -0.3:
-                                st.error("🔴 Overall Bearish: Technical indicators and news sentiment suggest negative pressure", key=f"score_{company_key}")
-                            else:
-                                st.warning("🟡 Neutral: Mixed signals from technical indicators and news sentiment", key=f"score_{company_key}")
-                        
-                        with st.container():
-                            # Volume Analysis
-                            avg_volume = df['Volume'].mean()
-                            latest_volume = df['Volume'][-1]
-                            volume_change = ((latest_volume - avg_volume) / avg_volume) * 100
-                            
-                            st.markdown("### Volume Analysis", key=f"volume_header_{company_key}")
-                            st.metric(
-                                "Trading Volume",
-                                f"{int(latest_volume):,}",
-                                f"{volume_change:.1f}% vs 30-day average",
-                                key=f"volume_{company_key}"
-                            )
+                            with st.expander(f"{company['name']} ({company['symbol']})", key=f"expander_{company_key}"):
+                                # Get stock data and technical analysis
+                                df, error = get_stock_data(company['code'])
+                                if error:
+                                    st.error(f"Error fetching stock data: {error}", key=f"error_{company_key}")
+                                    continue
+                                
+                                if df is not None:
+                                    with st.container():
+                                        # Show current stock price
+                                        latest_price = df['Close'][-1]
+                                        st.metric(
+                                            "Current Price",
+                                            f"{latest_price:.2f} SAR",
+                                            f"{((latest_price - df['Close'][-2])/df['Close'][-2]*100):.2f}%",
+                                            key=f"price_{company_key}"
+                                        )
+                                        
+                                        col1, col2 = st.columns(2)
+                                        with col1:
+                                            st.metric("Day High", f"{df['High'][-1]:.2f} SAR", key=f"high_{company_key}")
+                                        with col2:
+                                            st.metric("Day Low", f"{df['Low'][-1]:.2f} SAR", key=f"low_{company_key}")
+                                    
+                                    with st.container():
+                                        # Plot stock chart with unique key
+                                        fig = go.Figure()
+                                        fig.add_trace(
+                                            go.Candlestick(
+                                                x=df.index,
+                                                open=df['Open'],
+                                                high=df['High'],
+                                                low=df['Low'],
+                                                close=df['Close'],
+                                                name='Price'
+                                            )
+                                        )
+                                        fig.add_trace(
+                                            go.Bar(
+                                                x=df.index,
+                                                y=df['Volume'],
+                                                name='Volume',
+                                                yaxis='y2',
+                                                opacity=0.3
+                                            )
+                                        )
+                                        fig.update_layout(
+                                            title=f'{company["name"]} ({company["symbol"]}) - Price and Volume',
+                                            yaxis_title='Price (SAR)',
+                                            yaxis2=dict(
+                                                title='Volume',
+                                                overlaying='y',
+                                                side='right'
+                                            ),
+                                            height=400,
+                                            showlegend=True
+                                        )
+                                        st.plotly_chart(fig, use_container_width=True, key=f"chart_{company_key}")
+                                    
+                                    with st.container():
+                                        # Technical Analysis Signals
+                                        st.markdown("### Technical Analysis Signals", key=f"signals_header_{company_key}")
+                                        signals = analyze_technical_indicators(df)
+                                        signal_df = pd.DataFrame(signals, columns=['Indicator', 'Signal', 'Reason'])
+                                        st.table(signal_df, key=f"table_{company_key}")
+                                    
+                                    with st.container():
+                                        # Combined Analysis
+                                        st.markdown("### Combined Analysis", key=f"analysis_title_{company_key}")
+                                        tech_sentiment = sum(1 if signal[1] == "BULLISH" else -1 if signal[1] == "BEARISH" else 0 for signal in signals)
+                                        news_sentiment_score = 1 if sentiment == "POSITIVE" else -1 if sentiment == "NEGATIVE" else 0
+                                        
+                                        combined_score = (tech_sentiment + news_sentiment_score) / (len(signals) + 1)
+                                        
+                                        if combined_score > 0.3:
+                                            st.success("🟢 Overall Bullish: Technical indicators and news sentiment suggest positive momentum", key=f"score_{company_key}")
+                                        elif combined_score < -0.3:
+                                            st.error("🔴 Overall Bearish: Technical indicators and news sentiment suggest negative pressure", key=f"score_{company_key}")
+                                        else:
+                                            st.warning("🟡 Neutral: Mixed signals from technical indicators and news sentiment", key=f"score_{company_key}")
+                                    
+                                    with st.container():
+                                        # Volume Analysis
+                                        avg_volume = df['Volume'].mean()
+                                        latest_volume = df['Volume'][-1]
+                                        volume_change = ((latest_volume - avg_volume) / avg_volume) * 100
+                                        
+                                        st.markdown("### Volume Analysis", key=f"volume_header_{company_key}")
+                                        st.metric(
+                                            "Trading Volume",
+                                            f"{int(latest_volume):,}",
+                                            f"{volume_change:.1f}% vs 30-day average",
+                                            key=f"volume_{company_key}"
+                                        )
+                        except Exception as e:
+                            st.error(f"Error analyzing {company['name']}: {str(e)}")
+                            continue
+            
+            # Article link
+            with st.container():
+                st.markdown(f"[Read full article]({url})", key=f"link_{article_id}")
+                st.markdown("---", key=f"divider_{article_id}")
+    except Exception as e:
+        st.error(f"Error displaying article: {str(e)}")
+        st.write("Continuing with next article...")
     
-    # Article link
-    with st.container():
-        st.markdown(f"[Read full article]({url})", key=f"link_{article_id}")
-        st.markdown("---", key=f"divider_{article_id}")
-
 def main():
     st.title("Saudi Stock Market News")
     st.write("Real-time news analysis for Saudi stock market")
@@ -521,8 +544,16 @@ def main():
                     st.info("Try selecting a more recent date. The API might have limited historical data.")
             elif news_articles:
                 st.success(f"Found {len(news_articles)} articles")
-                for article in news_articles:
-                    display_article(article, companies_df)
+                
+                # Create a container for each article
+                for i, article in enumerate(news_articles):
+                    try:
+                        with st.container():
+                            display_article(article, companies_df)
+                    except Exception as e:
+                        st.error(f"Error displaying article {i+1}: {str(e)}")
+                        st.write("Continuing with next article...")
+                        continue
             else:
                 st.warning("No news articles found for the selected date range")
                 st.info("Try selecting a more recent date or increasing the number of articles.")
