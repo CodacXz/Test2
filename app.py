@@ -474,109 +474,141 @@ def display_article(article, companies_df):
         st.write("Continuing with next article...")
     
 def main():
-    st.title("Saudi Stock Market News")
-    st.write("Real-time news analysis for Saudi stock market")
-    
-    # Add version number to sidebar
-    st.sidebar.markdown("App Version: 1.0.5")
-    
-    # File uploader in sidebar
-    uploaded_file = st.sidebar.file_uploader("Upload companies file (optional)", type=['csv'])
-    
-    # Number of articles selector
-    num_articles = st.sidebar.slider("Number of articles", min_value=1, max_value=10, value=3)
-    
-    # Load companies data
-    companies_df = None
-    if uploaded_file is not None:
-        try:
-            companies_df = pd.read_csv(uploaded_file)
-            st.sidebar.success(f"✅ Successfully loaded {len(companies_df)} companies")
-        except Exception as e:
-            st.sidebar.error(f"Error loading file: {str(e)}")
-    else:
-        try:
-            companies_df = pd.read_csv(GITHUB_CSV_URL)
-            st.sidebar.success(f"✅ Loaded {len(companies_df)} companies")
-        except Exception as e:
-            st.sidebar.error(f"Error loading companies from GitHub: {str(e)}")
-    
-    if companies_df is None:
-        st.error("No company data available. Please upload a CSV file or check the GitHub URL.")
-        return
-    
-    # Date selector for news with better defaults and validation for 2025
-    today = datetime.now().date()
-    default_date = today - timedelta(days=1)  # Default to yesterday
-    
-    published_after = st.date_input(
-        "Show news published after:",
-        value=default_date,
-        min_value=datetime(2025, 1, 1).date(),  # Start of 2025
-        max_value=today
-    )
-    
-    # Check if API token is loaded
-    if not API_TOKEN:
-        st.error("❌ API Token not found in secrets.toml")
-        return
-    else:
-        st.sidebar.success("✅ API Token loaded")
-    
-    # Fetch and display news
-    if published_after:
-        # Format date in YYYY/MM/DD format as required by the API
-        formatted_date = published_after.strftime("%Y/%m/%d")
+    try:
+        st.title("Saudi Stock Market News")
+        st.write("Real-time news analysis for Saudi stock market")
         
-        with st.spinner('Fetching news...'):
-            news_articles, error = fetch_news(formatted_date, num_articles)
+        # Add version number to sidebar
+        st.sidebar.markdown("App Version: 1.0.5")
+        
+        # File uploader in sidebar
+        uploaded_file = st.sidebar.file_uploader("Upload companies file (optional)", type=['csv'])
+        
+        # Number of articles selector
+        num_articles = st.sidebar.slider("Number of articles", min_value=1, max_value=10, value=3)
+        
+        # Load companies data with better error handling
+        companies_df = None
+        if uploaded_file is not None:
+            try:
+                companies_df = pd.read_csv(uploaded_file)
+                if len(companies_df) == 0:
+                    st.sidebar.error("The uploaded file is empty. Please check the file contents.")
+                    return
+                st.sidebar.success(f"✅ Successfully loaded {len(companies_df)} companies")
+            except pd.errors.EmptyDataError:
+                st.sidebar.error("The uploaded file is empty. Please check the file contents.")
+                return
+            except Exception as e:
+                st.sidebar.error(f"Error loading file: {str(e)}")
+                st.sidebar.info("Please ensure your CSV file has 'Company_Code' and 'Company_Name' columns.")
+                return
+        else:
+            try:
+                companies_df = pd.read_csv(GITHUB_CSV_URL)
+                if len(companies_df) == 0:
+                    st.sidebar.error("The GitHub CSV file is empty. Please check the source file.")
+                    return
+                st.sidebar.success(f"✅ Loaded {len(companies_df)} companies")
+            except pd.errors.EmptyDataError:
+                st.sidebar.error("The GitHub CSV file is empty. Please check the source file.")
+                return
+            except requests.exceptions.RequestException as e:
+                st.sidebar.error(f"Error accessing GitHub file: {str(e)}")
+                st.sidebar.info("Please check your internet connection or try uploading a local file.")
+                return
+            except Exception as e:
+                st.sidebar.error(f"Error loading companies from GitHub: {str(e)}")
+                st.sidebar.info("Please try uploading a local file instead.")
+                return
+        
+        if companies_df is None:
+            st.error("No company data available. Please upload a CSV file or check the GitHub URL.")
+            return
             
-            if error:
-                st.error(error)
-                if "timed out" in error.lower():
-                    st.info("The server is taking longer than expected to respond. You can try:")
-                    st.markdown("""
-                    - Reducing the number of articles requested
-                    - Trying a different date range
-                    - Waiting a few minutes and trying again
-                    """)
-                elif "No articles found" in error:
-                    st.info("Try selecting a more recent date. The API might have limited historical data.")
-            elif news_articles:
-                st.success(f"Found {len(news_articles)} articles")
+        # Validate required columns
+        required_columns = ['Company_Code', 'Company_Name']
+        if not all(col in companies_df.columns for col in required_columns):
+            st.error("CSV file must contain 'Company_Code' and 'Company_Name' columns.")
+            return
+        
+        # Date selector for news with better defaults and validation
+        today = datetime.now().date()
+        default_date = today - timedelta(days=1)  # Default to yesterday
+        max_date = min(today, datetime(2025, 12, 31).date())  # Use the earlier of today or end of 2025
+        
+        published_after = st.date_input(
+            "Show news published after:",
+            value=default_date,
+            min_value=datetime(2025, 1, 1).date(),
+            max_value=max_date
+        )
+        
+        # Check if API token is loaded
+        if not API_TOKEN:
+            st.error("❌ API Token not found in secrets.toml")
+            st.info("Please ensure your secrets.toml file contains the MARKETAUX_API_KEY under the [general] section.")
+            return
+        else:
+            st.sidebar.success("✅ API Token loaded")
+        
+        # Fetch and display news
+        if published_after:
+            # Format date in YYYY/MM/DD format as required by the API
+            formatted_date = published_after.strftime("%Y/%m/%d")
+            
+            with st.spinner('Fetching news...'):
+                news_articles, error = fetch_news(formatted_date, num_articles)
                 
-                # Create a container for each article
-                for i, article in enumerate(news_articles):
-                    try:
-                        with st.container():
-                            display_article(article, companies_df)
-                    except Exception as e:
-                        st.error(f"Error displaying article {i+1}: {str(e)}")
-                        st.write("Continuing with next article...")
-                        continue
-            else:
-                st.warning("No news articles found for the selected date range")
-                st.info("Try selecting a more recent date or increasing the number of articles.")
-    
-    # App information
-    st.sidebar.markdown("---")
-    st.sidebar.write("App Version: 1.0.5")
-    
-    # Add GitHub information
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("""
-    ### How to use company data:
-    1. **Option 1:** Upload CSV file using the uploader above
-    2. **Option 2:** Add file to GitHub and update `GITHUB_CSV_URL`
-    
-    CSV file format:
-    ```
-    Company_Code,Company_Name
-    1010,Riyad Bank
-    1020,Bank Aljazira
-    ...
-    """
-    """)
+                if error:
+                    st.error(error)
+                    if "timed out" in error.lower():
+                        st.info("The server is taking longer than expected to respond. You can try:")
+                        st.markdown("""
+                        - Reducing the number of articles requested
+                        - Trying a different date range
+                        - Waiting a few minutes and trying again
+                        """)
+                    elif "No articles found" in error:
+                        st.info("Try selecting a more recent date. The API might have limited historical data.")
+                    elif "api_token" in error.lower():
+                        st.error("API token error. Please check your API token in secrets.toml")
+                elif news_articles:
+                    st.success(f"Found {len(news_articles)} articles")
+                    
+                    # Create a container for each article
+                    for i, article in enumerate(news_articles):
+                        try:
+                            with st.container():
+                                display_article(article, companies_df)
+                        except Exception as e:
+                            st.error(f"Error displaying article {i+1}: {str(e)}")
+                            st.write("Continuing with next article...")
+                            continue
+                else:
+                    st.warning("No news articles found for the selected date range")
+                    st.info("Try selecting a more recent date or increasing the number of articles.")
+        
+        # App information
+        st.sidebar.markdown("---")
+        
+        # Add GitHub information
+        st.sidebar.markdown("""
+        ### How to use company data:
+        1. **Option 1:** Upload CSV file using the uploader above
+        2. **Option 2:** Add file to GitHub and update `GITHUB_CSV_URL`
+        
+        CSV file format:
+        ```
+        Company_Code,Company_Name
+        1010,Riyad Bank
+        1020,Bank Aljazira
+        ...
+        ```
+        """)
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.info("Please try refreshing the page. If the error persists, contact support.")
 
 if __name__ == "__main__":
     main()
