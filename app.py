@@ -355,15 +355,17 @@ def get_marketstack_data(symbol):
     API_KEY = "e537111ec25329587f27f61bb59938bc"
     BASE_URL = "http://api.marketstack.com/v1"
     
-    # Format symbol for Saudi stocks
-    formatted_symbol = f"{symbol}.SAU"
+    # Format symbol for Saudi stocks (remove leading zeros and add exchange)
+    symbol = str(int(symbol))  # Remove leading zeros
+    formatted_symbol = f"TADAWUL:{symbol}"  # Use TADAWUL exchange prefix
     
     try:
         # Get real-time data
         params = {
             "access_key": API_KEY,
             "symbols": formatted_symbol,
-            "limit": 1
+            "limit": 1,
+            "exchange": "TADAWUL"  # Specify Saudi exchange
         }
         
         # Get latest quote
@@ -377,6 +379,7 @@ def get_marketstack_data(symbol):
             eod_params = {
                 "access_key": API_KEY,
                 "symbols": formatted_symbol,
+                "exchange": "TADAWUL",
                 "limit": 30  # Get last 30 days for technical analysis
             }
             
@@ -402,7 +405,8 @@ def get_marketstack_data(symbol):
                     'change_percent': quote.get('change_percent', 0),
                     'last_updated': quote.get('date', ''),
                     'rsi': rsi,
-                    'sma20': sma20
+                    'sma20': sma20,
+                    'historical_data': df  # Add historical data for charts
                 }
             
         if "error" in data:
@@ -496,85 +500,101 @@ def get_technical_signals(analysis):
         
     return signals
 
+def get_symbol_from_name(company_name):
+    """Map company name to stock symbol"""
+    # Common company name variations to symbol mapping
+    company_map = {
+        # Banks
+        "al rajhi": "1120",
+        "alrajhi": "1120",
+        "sns": "1180",
+        "saudi national bank": "1180",
+        "alinma": "1150",
+        "al inma": "1150",
+        
+        # Energy & Materials
+        "aramco": "2222",
+        "saudi aramco": "2222",
+        "sabic": "2010",
+        "saudi basic industries": "2010",
+        "maaden": "1211",
+        "saudi arabian mining": "1211",
+        
+        # Healthcare
+        "canadian medical": "9518",
+        "canadian medical center": "9518",
+        "dallah health": "4004",
+        "mouwasat": "4002",
+        
+        # Add more mappings as needed
+    }
+    
+    # Clean and normalize the company name
+    name = company_name.lower().strip()
+    
+    # Try exact match first
+    if name in company_map:
+        return company_map[name]
+    
+    # Try partial matches
+    for key, symbol in company_map.items():
+        if key in name or name in key:
+            return symbol
+    
+    return None
+
 def display_article(article):
-    """Display a single news article with enhanced sentiment and technical analysis"""
-    title = article.get("title", "No title available")
-    description = article.get("description", "No description available")
+    """Display news article with sentiment and technical analysis"""
+    title = article.get("title", "")
+    description = article.get("description", "")
+    source = article.get("source", "")
     url = article.get("url", "#")
     published_at = article.get("published_at", "")
-    source = article.get("source", "Unknown source")
     
-    try:
-        published_date = datetime.strptime(published_at, "%Y-%m-%dT%H:%M:%S.%fZ")
-        published_str = published_date.strftime("%Y-%m-%d %H:%M")
-    except:
-        published_str = published_at
-
-    with st.container():
-        st.subheader(title)
-        st.write(f"**Source:** {source} | **Published:** {published_str}")
-        
-        if description:
-            st.write(description)
-            sentiment, confidence, details = analyze_article_sentiment(article)
-            
-            # Create columns for metrics
-            col1, col2, col3 = st.columns(3)
-            
-            # Main sentiment metrics
-            col1.metric("Overall Sentiment", sentiment)
-            col2.metric("Confidence", f"{confidence:.2%}")
-            
-            # Detailed sentiment analysis
-            with col3.expander("Detailed Analysis"):
-                st.write("### Title Analysis")
-                if details['title_analysis']['details']:
-                    st.write(f"Sentiment: {details['title_analysis']['sentiment']}")
-                    st.write(f"Confidence: {details['title_analysis']['confidence']:.2%}")
-                
-                st.write("### Description Analysis")
-                if details['description_analysis']['details']:
-                    st.write(f"Sentiment: {details['description_analysis']['sentiment']}")
-                    st.write(f"Confidence: {details['description_analysis']['confidence']:.2%}")
-                    
-                    vader = details['description_analysis']['details']['vader']
-                    finbert = details['description_analysis']['details']['finbert']
-                    roberta = details['description_analysis']['details']['roberta']
-                    
-                    st.write("#### VADER Scores")
-                    st.write(f"Positive: {vader['pos']:.2%}")
-                    st.write(f"Neutral: {vader['neu']:.2%}")
-                    st.write(f"Negative: {vader['neg']:.2%}")
-                    
-                    st.write("#### FinBERT Analysis")
-                    st.write(f"Label: {finbert['label']}")
-                    st.write(f"Score: {finbert['score']:.2%}")
-                    
-                    st.write("#### RoBERTa Analysis")
-                    st.write(f"Label: {roberta['label']}")
-                    st.write(f"Score: {roberta['score']:.2%}")
-        
-        # Add Technical Analysis section
-        if 'entities' in article and article['entities']:
-            for entity in article['entities']:
-                if entity.get('type') == 'equity' and entity.get('symbol'):
-                    st.write("### Technical Analysis")
-                    with st.expander(f"Technical Analysis for {entity['name']} ({entity['symbol']})"):
-                        analysis = get_technical_analysis(entity['symbol'])
-                        
-                        if analysis:
+    # Extract company name and get symbol
+    company_name = extract_company_name(title + " " + description)
+    if company_name:
+        symbol = get_symbol_from_name(company_name)
+    else:
+        symbol = None
+    
+    # Display article info
+    st.markdown(f"### {title}")
+    st.write(f"Source: {source}")
+    st.write(f"Published: {published_at}")
+    
+    if description:
+        st.write(description)
+    
+    # Display sentiment analysis
+    sentiment, confidence, details = analyze_article_sentiment(article)
+    
                             col1, col2 = st.columns(2)
-                            
                             with col1:
-                                st.metric("Current Price", f"SAR {analysis['price']:.2f}", 
-                                        f"{analysis['change_percent']:.2f}%")
-                                st.metric("RSI", f"{analysis['rsi']:.2f}")
-                            
+        st.write("### Sentiment Analysis")
+        st.write(f"Overall: {sentiment}")
+        st.write(f"Confidence: {confidence:.2f}")
+    
+    # If we found a company symbol, show technical analysis
+    if symbol:
                             with col2:
-                                st.metric("SMA20", f"SAR {analysis['sma20']:.2f}")
-                                st.metric("Volume", f"{analysis['volume']:,.0f}")
-                            
-                            # Plot technical chart
+            st.write("### Technical Analysis")
+            st.write(f"Company: {company_name} ({symbol})")
+            
+            # Get technical analysis
+            analysis = get_marketstack_data(symbol)
+            if analysis:
+                # Show price and change
+                st.metric("Price", 
+                         f"SAR {analysis['price']:.2f}", 
+                         f"{analysis['change_percent']:.2f}%")
+                
+                # Show technical indicators
+                st.write(f"RSI: {analysis['rsi']:.2f}")
+                st.write(f"SMA20: {analysis['sma20']:.2f}")
+                
+                # Plot chart if historical data is available
+                if 'historical_data' in analysis:
                             st.plotly_chart(plot_technical_chart(analysis['historical_data']))
                             
                             # Display trading signals
@@ -583,11 +603,36 @@ def display_article(article):
                                 st.write("### Trading Signals")
                                 for indicator, condition, signal in signals:
                                     st.write(f"- {indicator}: {condition} ({signal})")
-                        else:
-                            st.warning("Unable to fetch technical analysis data")
         
         st.markdown(f"[Read full article]({url})")
         st.markdown("---")
+
+def extract_company_name(text):
+    """Extract company name from text using simple rules"""
+    # List of common company indicators
+    indicators = [
+        "company", "corp", "corporation", "inc", "ltd", "limited",
+        "bank", "group", "holding", "شركة", "بنك", "مجموعة"
+    ]
+    
+    # Split text into sentences
+    sentences = text.split(".")
+    
+    for sentence in sentences:
+        # Look for company indicators
+        for indicator in indicators:
+            if indicator.lower() in sentence.lower():
+                # Get the surrounding words
+                words = sentence.split()
+                idx = next((i for i, word in enumerate(words) 
+                          if indicator.lower() in word.lower()), None)
+                if idx is not None:
+                    # Take up to 3 words before the indicator
+                    start = max(0, idx - 3)
+                    company = " ".join(words[start:idx+1])
+                    return company.strip()
+    
+    return None
 
 def get_alpha_vantage_data(symbol):
     """Get stock data from Alpha Vantage with enhanced Saudi market support"""
@@ -761,6 +806,39 @@ def get_fmp_technical_indicators(symbol):
     except Exception as e:
         st.error(f"Error fetching technical indicators: {str(e)}")
         return None
+
+def plot_technical_chart(df):
+    """Create technical analysis chart using plotly"""
+    fig = go.Figure()
+    
+    # Add candlestick chart
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df['open'],
+        high=df['high'],
+        low=df['low'],
+        close=df['close'],
+        name='Price'
+    ))
+    
+    # Add SMA20
+    sma20 = ta.trend.SMAIndicator(df['close'], window=20).sma_indicator()
+    fig.add_trace(go.Scatter(
+        x=df.index,
+        y=sma20,
+        name='SMA20',
+        line=dict(color='orange')
+    ))
+    
+    # Update layout
+    fig.update_layout(
+        title='Price and Technical Indicators',
+        yaxis_title='Price (SAR)',
+        xaxis_title='Date',
+        template='plotly_white'
+    )
+    
+    return fig
 
 def main():
     st.title("Saudi Stock Market News")
