@@ -144,22 +144,17 @@ def display_article(article, companies_df, article_idx):
     # Create unique key prefix from title
     unique_key = f"{hash(title)}_{article_idx}"
     
-    # Find mentioned companies first
-    text = f"{title} {description}"
-    mentioned_company = None
+    # Skip button at the top
+    col1, col2 = st.columns([4, 1])
+    with col2:
+        if st.button("⏭️ Skip", key=f"skip_{unique_key}"):
+            st.session_state[f'skip_{unique_key}'] = True
+            return False
     
-    # Find first company mentioned
-    for _, row in companies_df.iterrows():
-        company_name = str(row['Company_Name']).lower()
-        company_code = str(row['Company_Code'])
-        if company_name in text.lower() or company_code in text.lower():
-            mentioned_company = {
-                'name': row['Company_Name'],
-                'code': company_code,
-                'symbol': f"{company_code}.SR"
-            }
-            break
-    
+    # Check if this article should be skipped
+    if st.session_state.get(f'skip_{unique_key}', False):
+        return False
+        
     # Display article content
     with st.container():
         st.markdown(f"## {title}", key=f"title_{unique_key}")
@@ -174,6 +169,22 @@ def display_article(article, companies_df, article_idx):
             st.markdown("### Sentiment Analysis", key=f"sent_title_{unique_key}")
             st.write(f"**Sentiment:** {sentiment}", key=f"sent_value_{unique_key}")
             st.write(f"**Confidence:** {confidence:.2f}%", key=f"conf_value_{unique_key}")
+        
+        # Find mentioned companies first
+        text = f"{title} {description}"
+        mentioned_company = None
+        
+        # Find first company mentioned
+        for _, row in companies_df.iterrows():
+            company_name = str(row['Company_Name']).lower()
+            company_code = str(row['Company_Code'])
+            if company_name in text.lower() or company_code in text.lower():
+                mentioned_company = {
+                    'name': row['Company_Name'],
+                    'code': company_code,
+                    'symbol': f"{company_code}.SR"
+                }
+                break
         
         if mentioned_company:
             # Create unique key for this company in this article
@@ -248,9 +259,35 @@ def display_article(article, companies_df, article_idx):
         st.markdown(f"[Read full article]({url})", key=f"url_{unique_key}")
         st.markdown("---", key=f"divider_{unique_key}")
 
+def check_api_credits():
+    """Check remaining API credits"""
+    try:
+        params = {
+            "api_token": API_TOKEN
+        }
+        response = requests.get("https://api.marketaux.com/v1/usage", params=params)
+        response.raise_for_status()
+        data = response.json()
+        return data.get("credits", {})
+    except Exception as e:
+        st.error(f"Error checking API credits: {str(e)}")
+        return None
+
 def main():
     st.title("Saudi Stock Market News", key="main_title")
     st.write("Real-time news analysis for Saudi stock market", key="main_desc")
+    
+    # Initialize session state for skipped articles
+    if 'skipped_articles' not in st.session_state:
+        st.session_state.skipped_articles = set()
+    
+    # Check and display API credits
+    credits = check_api_credits()
+    if credits:
+        st.sidebar.write("### API Credits")
+        st.sidebar.write(f"Used: {credits.get('used', 'N/A')}")
+        st.sidebar.write(f"Remaining: {credits.get('remaining', 'N/A')}")
+        st.sidebar.write(f"Limit: {credits.get('limit', 'N/A')}")
     
     # Sidebar settings
     st.sidebar.title("Settings", key="settings_title")
@@ -283,6 +320,13 @@ def main():
         key="article_limit"
     )
     
+    # Add reset button in sidebar
+    if st.sidebar.button("🔄 Reset Skipped Articles"):
+        for key in list(st.session_state.keys()):
+            if key.startswith('skip_'):
+                del st.session_state[key]
+        st.experimental_rerun()
+
     # Fetch news
     if st.button("Fetch News", key="fetch_button", use_container_width=True):
         with st.spinner("Fetching latest news..."):
